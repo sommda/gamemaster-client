@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, nextTick } from 'vue'
+import { useChatStream } from '@/composables/useChatStream'
+import StreamMarkdown from '@/components/StreamMarkdown.vue' // adjust path if needed
 
 type Msg = { role: 'system' | 'user' | 'assistant'; content: string }
 
@@ -59,7 +61,7 @@ async function send() {
     temperature: 0.2
   }
 
-  // optional: batch very small chunks to the next animation frame
+  // Batch tiny deltas to the next animation frame for smoothness
   let pending = ''
   let raf = 0
   const flush = () => {
@@ -71,16 +73,13 @@ async function send() {
   }
 
   try {
-    // open the SSE stream (server emits {text:"..."} frames)
     stop.value = await openChatStream(
       payload,
       (delta: string) => {
-        // batch tiny deltas to reduce reflows, still feels realtime
         pending += delta
         if (!raf) raf = requestAnimationFrame(flush)
       },
       (err: any) => {
-        // show detailed error object if our stream route sent one
         error.value = typeof err === 'string' ? err : JSON.stringify(err, null, 2)
         cancel()
       },
@@ -109,7 +108,11 @@ async function send() {
     <div ref="chatBox" class="chat-box">
       <div v-for="(m, i) in visibleMessages" :key="i" class="msg" :class="m.role">
         <strong class="role">{{ m.role }}</strong>
-        <div class="bubble">{{ m.content }}</div>
+        <div class="bubble">
+          <!-- Render markdown live for assistant; plain for user -->
+          <StreamMarkdown v-if="m.role === 'assistant'" :source="m.content" />
+          <div v-else class="user-text">{{ m.content }}</div>
+        </div>
       </div>
     </div>
 
@@ -139,7 +142,8 @@ async function send() {
 .msg.user .bubble { background: #e8f0fe; }
 .msg.assistant .bubble { background: #f1f5f9; }
 .role { width: 80px; text-transform: capitalize; }
-.bubble { padding: 8px 10px; border-radius: 10px; white-space: pre-wrap; flex: 1; }
+.bubble { padding: 8px 10px; border-radius: 10px; white-space: normal; flex: 1; }
+.user-text { white-space: pre-wrap; }
 .composer { display: flex; gap: 8px; align-items: flex-end; }
 .input { flex: 1; resize: vertical; padding: 10px; border-radius: 8px; border: 1px solid #ccc; }
 .send { margin-left: 6px; }

@@ -16,6 +16,8 @@
     "@pinia/nuxt": "^0.11.2",
     "@tailwindcss/postcss": "^4.1.13",
     "autoprefixer": "^10.4.21",
+    "dompurify": "^3.2.6",
+    "markdown-it": "^14.1.0",
     "marked": "^16.2.1",
     "nuxt": "^4.1.1",
     "vue": "^3.5.21",
