@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom styles for the gamemaster client */
+.pane-border {
+  @apply border-gray-300 dark:border-gray-700;
+}
+
+.chat-message {
+  @apply mb-4 p-3 rounded-lg;
+}
+
+.chat-message.user {
+  @apply bg-blue-100 dark:bg-blue-900 ml-8;
+}
+
+.chat-message.assistant {
+  @apply bg-gray-100 dark:bg-gray-800 mr-8;
+}
+
+.character-stat {
+  @apply text-sm font-medium;
+}
+
+.tactical-grid {
+  @apply border border-gray-400;
+}
