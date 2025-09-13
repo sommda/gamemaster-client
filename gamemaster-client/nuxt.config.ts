@@ -11,6 +11,9 @@ export default defineNuxtConfig({
       baseURL: process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com/v1',
       version: process.env.ANTHROPIC_VERSION || '2023-06-01', // or current
     },
+    mcp: {
+      url: process.env.MCP_URL || ''  // e.g., https://your-public-host
+    }
   },
   routeRules: {
     '/api/chat': { headers: { 'Cache-Control': 'no-store' } },

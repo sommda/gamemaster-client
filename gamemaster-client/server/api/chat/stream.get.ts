@@ -9,7 +9,7 @@ export default defineEventHandler(async (event) => {
   const body = sid ? store.get(String(sid)) : null
   store.delete(String(sid || ''))
 
-  // -- open SSE immediately so we can send detailed errors over the stream --
+  // --- open SSE immediately so we can stream detailed errors ---
   const res = event.node.res
   res.statusCode = 200
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
@@ -41,27 +41,59 @@ export default defineEventHandler(async (event) => {
       const { apiKey, baseURL } = config.openai ?? {}
       if (!apiKey) { sendError('missing_key', { provider: 'openai' }); res.end(); return }
       url = `${(baseURL || 'https://api.openai.com/v1').replace(/\/+$/, '')}/responses`
-      headers = { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Idempotency-Key': idem }
+      headers = {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': idem
+      }
       payload = {
         model: body.model,
         input: chatMsgs.map((m: any) => ({ role: m.role, content: m.content })),
+        ...(system ? { system } : {}),
         stream: true,
         temperature: body.temperature ?? 0.7,
-        max_output_tokens: body.maxTokens ?? 1024,
-        ...(system ? { system } : {})
+        max_output_tokens: body.maxTokens ?? 1024
       }
     } else if (body.provider === 'anthropic') {
       const { apiKey, baseURL, version } = config.anthropic ?? {}
       if (!apiKey) { sendError('missing_key', { provider: 'anthropic' }); res.end(); return }
+
+      // 🔑 MCP URL (public) required for Anthropic MCP
+      const mcpBase = (config.mcp?.url || '').replace(/\/+$/, '')
+      if (!mcpBase) {
+        sendError('missing_mcp_url', {
+          message: 'Set MCP_URL (public base URL). Anthropic must reach MCP_URL + /mcp/.'
+        })
+        res.end(); return
+      }
+
       url = `${(baseURL || 'https://api.anthropic.com/v1').replace(/\/+$/, '')}/messages`
-      headers = { 'x-api-key': apiKey, 'anthropic-version': version || '2023-06-01', 'Content-Type': 'application/json', 'Idempotency-Key': idem }
+      headers = {
+        'x-api-key': apiKey,
+        'anthropic-version': version || '2023-06-01',
+        'Content-Type': 'application/json',
+        'Idempotency-Key': idem,
+        // ✅ enable server-side MCP
+        'anthropic-beta': 'mcp-client-2025-04-04'
+      }
+
+      // ✅ mcp_servers list (server-side MCP)
+      const mcpServers = [
+        {
+          type: 'url',
+          name: 'gamemaster-mcp',
+          url: `${mcpBase}/mcp/` // ensure trailing slash
+        }
+      ]
+
       payload = {
         model: body.model,
         messages: chatMsgs.map((m: any) => ({ role: m.role, content: m.content })),
         ...(system ? { system } : {}),
         stream: true,
         temperature: body.temperature ?? 0.7,
-        max_tokens: body.maxTokens ?? 1024
+        max_tokens: body.maxTokens ?? 1024,
+        mcp_servers: mcpServers
       }
     } else {
       sendError('unsupported_provider', { provider: body.provider })
@@ -88,6 +120,7 @@ export default defineEventHandler(async (event) => {
       res.end(); return
     }
 
+    // --- parse provider SSE, re-emit small {text:"..."} frames to client ---
     const reader = upstream.body!.getReader()
     const decoder = new TextDecoder()
     let buf = ''
@@ -97,7 +130,6 @@ export default defineEventHandler(async (event) => {
       if (done) break
       buf += decoder.decode(value, { stream: true })
 
-      // parse provider SSE (events separated by blank line)
       for (;;) {
         const i = buf.indexOf('\n\n'); if (i === -1) break
         const frame = buf.slice(0, i); buf = buf.slice(i + 2)
@@ -109,7 +141,7 @@ export default defineEventHandler(async (event) => {
         try {
           const evt = JSON.parse(data)
 
-          // Anthropic token
+          // Anthropic tokens (works with/without MCP calls)
           if (evt?.type === 'content_block_delta' && evt?.delta?.type === 'text_delta') {
             const t = evt.delta.text || ''
             if (t) send({ text: t })
@@ -120,7 +152,7 @@ export default defineEventHandler(async (event) => {
             continue
           }
 
-          // OpenAI token
+          // OpenAI tokens
           if (evt?.type === 'response.output_text.delta' && typeof evt?.delta === 'string') {
             send({ text: evt.delta }); continue
           }
@@ -132,10 +164,9 @@ export default defineEventHandler(async (event) => {
             continue
           }
 
-          // other control frames → ignore
+          // (Optional) observe other frames in debug
           if (debug) sendEvt('debug', { frameType: evt?.type })
-        } catch (e) {
-          // non-JSON frames
+        } catch {
           if (debug) sendEvt('debug', { nonJsonFrame: (data || '').slice(0, 200) })
         }
       }
