@@ -1,25 +1,32 @@
 <script setup lang="ts">
-import { ref, reactive, computed, nextTick } from 'vue'
-import { useChatStream } from '@/composables/useChatStream'
-import StreamMarkdown from '@/components/StreamMarkdown.vue' // adjust path if needed
+import { ref, reactive, computed, nextTick, onMounted, watch } from 'vue'
+import StreamMarkdown from '@/components/StreamMarkdown.vue'        // adjust path if needed
+import { useChatStream } from '@/composables/useChatStream'         // adjust path if needed
 
 type Msg = { role: 'system' | 'user' | 'assistant'; content: string }
 
 const { openChatStream } = useChatStream()
 
-// --- state ---
+// --- provider + models ---
 const provider = ref<'anthropic' | 'openai'>('anthropic')
 const modelByProvider: Record<string, string> = {
   anthropic: 'claude-sonnet-4-20250514',
   openai: 'gpt-5'
 }
-const messages = ref<Msg[]>([{ role: 'system', content: 'You are a helpful assistant.' }])
+
+// --- system message (configurable) ---
+const DEFAULT_SYSTEM = 'You are a helpful assistant.'
+const systemMsg = ref<string>(DEFAULT_SYSTEM)
+const showSettings = ref(false)
+
+// --- conversation state ---
+const messages = ref<Msg[]>([{ role: 'system', content: systemMsg.value }])
+const visibleMessages = computed(() => messages.value.filter(m => m.role !== 'system'))
+
 const userInput = ref('')
 const error = ref<string | null>(null)
 const stop = ref<null | (() => void)>(null)        // close EventSource when set
 const chatBox = ref<HTMLElement | null>(null)
-
-const visibleMessages = computed(() => messages.value.filter(m => m.role !== 'system'))
 
 function scrollToBottom() {
   nextTick(() => chatBox.value?.scrollTo({ top: chatBox.value!.scrollHeight, behavior: 'smooth' }))
@@ -37,6 +44,40 @@ function cancel() {
   stop.value = null
 }
 
+function newChat() {
+  // preserve system message as first entry, clear the rest
+  messages.value = [{ role: 'system', content: systemMsg.value }]
+  error.value = null
+  userInput.value = ''
+}
+
+function resetSystem() {
+  systemMsg.value = DEFAULT_SYSTEM
+}
+
+// --- persist + bind system message ---
+onMounted(() => {
+  // load persisted system message (if any)
+  try {
+    const saved = localStorage.getItem('systemMessage')
+    if (saved && typeof saved === 'string') systemMsg.value = saved
+  } catch {}
+  // ensure messages[0] matches systemMsg
+  messages.value[0] = { role: 'system', content: systemMsg.value }
+})
+
+watch(systemMsg, (val) => {
+  // keep first message in sync with current system prompt
+  if (!messages.value.length || messages.value[0].role !== 'system') {
+    messages.value.unshift({ role: 'system', content: val })
+  } else {
+    messages.value[0] = { role: 'system', content: val }
+  }
+  // persist
+  try { localStorage.setItem('systemMessage', val) } catch {}
+})
+
+// --- send & stream ---
 async function send() {
   const text = userInput.value.trim()
   if (!text || stop.value) return
@@ -47,7 +88,7 @@ async function send() {
   userInput.value = ''
   scrollToBottom()
 
-  // 🔑 assistant placeholder is REACTIVE (so content mutation triggers renders)
+  // assistant placeholder is REACTIVE so text deltas trigger updates
   const assistant = reactive<Msg>({ role: 'assistant', content: '' })
   messages.value.push(assistant)
   scrollToBottom()
@@ -55,13 +96,14 @@ async function send() {
   const payload = {
     provider: provider.value,
     model: modelByProvider[provider.value],
-    system: messages.value.find(m => m.role === 'system')?.content,
+    // We pass both the explicit system field and drop system from messages below
+    system: systemMsg.value,
     messages: messages.value.filter(m => m.role !== 'system'),
     maxTokens: 1024,
     temperature: 0.2
   }
 
-  // Batch tiny deltas to the next animation frame for smoothness
+  // Batch tiny deltas for smooth rendering
   let pending = ''
   let raf = 0
   const flush = () => {
@@ -81,9 +123,12 @@ async function send() {
       },
       (err: any) => {
         error.value = typeof err === 'string' ? err : JSON.stringify(err, null, 2)
-        cancel()
+        // cancel() will also clear stop, but onDone handles it anyway
       },
-      { debug: false }
+      {
+        debug: false,
+        onDone: () => { stop.value = null }   // ✅ allow next send
+      }
     )
   } catch (e: any) {
     error.value = e?.message ?? String(e)
@@ -95,21 +140,44 @@ async function send() {
 <template>
   <div class="chat-layout">
     <div class="toolbar">
-      <label class="toolbar-item">
-        Provider:
-        <select v-model="provider">
-          <option value="anthropic">Anthropic</option>
-          <option value="openai">OpenAI</option>
-        </select>
-      </label>
-      <button class="btn" :disabled="!stop" @click="cancel">Cancel</button>
+      <div class="left">
+        <label class="toolbar-item">
+          Provider:
+          <select v-model="provider">
+            <option value="anthropic">Anthropic</option>
+            <option value="openai">OpenAI</option>
+          </select>
+        </label>
+        <button class="btn" @click="newChat">New chat</button>
+      </div>
+      <div class="right">
+        <button class="btn secondary" @click="showSettings = !showSettings">⚙️ System</button>
+        <button class="btn danger" :disabled="!stop" @click="cancel">Cancel</button>
+      </div>
     </div>
+
+    <transition name="fade">
+      <div v-if="showSettings" class="settings">
+        <div class="settings-row">
+          <label class="settings-label">System message</label>
+          <textarea
+            v-model="systemMsg"
+            class="settings-input"
+            rows="4"
+            placeholder="Enter the system prompt for this chat..."
+          />
+        </div>
+        <div class="settings-actions">
+          <button class="btn" @click="resetSystem">Reset to default</button>
+          <span class="hint">Saved to this browser (localStorage)</span>
+        </div>
+      </div>
+    </transition>
 
     <div ref="chatBox" class="chat-box">
       <div v-for="(m, i) in visibleMessages" :key="i" class="msg" :class="m.role">
         <strong class="role">{{ m.role }}</strong>
         <div class="bubble">
-          <!-- Render markdown live for assistant; plain for user -->
           <StreamMarkdown v-if="m.role === 'assistant'" :source="m.content" />
           <div v-else class="user-text">{{ m.content }}</div>
         </div>
@@ -133,10 +201,23 @@ async function send() {
 
 <style scoped>
 .chat-layout { display: flex; flex-direction: column; gap: 12px; max-width: 860px; margin: 0 auto; padding: 16px; }
-.toolbar { display: flex; gap: 12px; align-items: center; }
+.toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.left, .right { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .toolbar-item { display: flex; gap: 8px; align-items: center; }
 .btn { padding: 8px 14px; border: 0; border-radius: 8px; background: #111; color: #fff; cursor: pointer; }
+.btn.secondary { background: #334155; }
+.btn.danger { background: #b91c1c; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* Settings panel */
+.settings { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; background: #f8fafc; }
+.settings-row { display: grid; grid-template-columns: 140px 1fr; gap: 12px; align-items: start; }
+.settings-label { padding-top: 6px; color: #475569; }
+.settings-input { width: 100%; resize: vertical; padding: 10px; border-radius: 8px; border: 1px solid #cbd5e1; font-family: system-ui, sans-serif; }
+.settings-actions { display: flex; gap: 12px; align-items: center; margin-top: 8px; }
+.hint { color: #64748b; font-size: 12px; }
+
+/* Messages */
 .chat-box { height: 60vh; overflow: auto; border: 1px solid #ddd; border-radius: 8px; padding: 12px; background: #fafafa; }
 .msg { display: flex; gap: 8px; margin: 6px 0; }
 .msg.user .bubble { background: #e8f0fe; }
@@ -144,8 +225,16 @@ async function send() {
 .role { width: 80px; text-transform: capitalize; }
 .bubble { padding: 8px 10px; border-radius: 10px; white-space: normal; flex: 1; }
 .user-text { white-space: pre-wrap; }
+
+/* Composer */
 .composer { display: flex; gap: 8px; align-items: flex-end; }
 .input { flex: 1; resize: vertical; padding: 10px; border-radius: 8px; border: 1px solid #ccc; }
 .send { margin-left: 6px; }
+
+/* Error */
 .error { color: #b00020; white-space: pre-wrap; background: #fff3f3; border: 1px solid #f3c0c0; border-radius: 8px; padding: 8px; }
+
+/* transitions */
+.fade-enter-active, .fade-leave-active { transition: opacity .15s ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
 </style>
