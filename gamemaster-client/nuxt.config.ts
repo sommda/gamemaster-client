@@ -16,7 +16,7 @@ export default defineNuxtConfig({
     }
   },
   routeRules: {
-    '/api/chat': { headers: { 'Cache-Control': 'no-store' } },
+    '/api/chat/**': { headers: { 'Cache-Control': 'no-store' } },
     '/mcp/**':   { headers: { 'Cache-Control': 'no-store' } },
   },
 
@@ -28,7 +28,4 @@ export default defineNuxtConfig({
   },
 
   nitro: { preset: 'node-server' },
-  routeRules: {
-    '/api/chat/**': { headers: { 'Cache-Control': 'no-store' } },
-  }
 })

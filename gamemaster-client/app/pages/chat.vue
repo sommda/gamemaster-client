@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, reactive, computed, nextTick, onMounted, watch } from 'vue'
-import StreamMarkdown from '@/components/StreamMarkdown.vue'        // adjust path if needed
-import { useChatStream } from '@/composables/useChatStream'         // adjust path if needed
+import StreamMarkdown from '@/components/StreamMarkdown.vue'
+import { useChatStream } from '@/composables/useChatStream'
 
 type Msg = { role: 'system' | 'user' | 'assistant'; content: string }
 
 const { openChatStream } = useChatStream()
+const { recordInteraction, fetchCurrentTranscript, getClient } = useMcpClient()
 
 // --- provider + models ---
 const provider = ref<'anthropic' | 'openai'>('anthropic')
@@ -25,8 +26,12 @@ const visibleMessages = computed(() => messages.value.filter(m => m.role !== 'sy
 
 const userInput = ref('')
 const error = ref<string | null>(null)
-const stop = ref<null | (() => void)>(null)        // close EventSource when set
+const stop = ref<null | (() => void)>(null) // active stream closer
 const chatBox = ref<HTMLElement | null>(null)
+
+// --- transcript panel ---
+const showTranscript = ref(true)
+const transcript = ref<string>('') // latest transcript text
 
 function scrollToBottom() {
   nextTick(() => chatBox.value?.scrollTo({ top: chatBox.value!.scrollHeight, behavior: 'smooth' }))
@@ -45,50 +50,42 @@ function cancel() {
 }
 
 function newChat() {
-  // preserve system message as first entry, clear the rest
   messages.value = [{ role: 'system', content: systemMsg.value }]
   error.value = null
   userInput.value = ''
+  transcript.value = ''
 }
 
 function resetSystem() {
   systemMsg.value = DEFAULT_SYSTEM
 }
 
-// --- persist + bind system message ---
+// Persist + bind system message
 onMounted(() => {
-  // load persisted system message (if any)
-  try {
-    const saved = localStorage.getItem('systemMessage')
-    if (saved && typeof saved === 'string') systemMsg.value = saved
-  } catch {}
-  // ensure messages[0] matches systemMsg
+  try { const saved = localStorage.getItem('systemMessage'); if (saved) systemMsg.value = saved } catch {}
   messages.value[0] = { role: 'system', content: systemMsg.value }
 })
-
 watch(systemMsg, (val) => {
-  // keep first message in sync with current system prompt
   if (!messages.value.length || messages.value[0].role !== 'system') {
     messages.value.unshift({ role: 'system', content: val })
   } else {
     messages.value[0] = { role: 'system', content: val }
   }
-  // persist
   try { localStorage.setItem('systemMessage', val) } catch {}
 })
 
-// --- send & stream ---
 async function send() {
   const text = userInput.value.trim()
   if (!text || stop.value) return
   error.value = null
 
   // add user msg
-  messages.value.push({ role: 'user', content: text })
+  const userMsg: Msg = { role: 'user', content: text }
+  messages.value.push(userMsg)
   userInput.value = ''
   scrollToBottom()
 
-  // assistant placeholder is REACTIVE so text deltas trigger updates
+  // reactive assistant placeholder
   const assistant = reactive<Msg>({ role: 'assistant', content: '' })
   messages.value.push(assistant)
   scrollToBottom()
@@ -96,14 +93,13 @@ async function send() {
   const payload = {
     provider: provider.value,
     model: modelByProvider[provider.value],
-    // We pass both the explicit system field and drop system from messages below
     system: systemMsg.value,
     messages: messages.value.filter(m => m.role !== 'system'),
     maxTokens: 1024,
     temperature: 0.2
   }
 
-  // Batch tiny deltas for smooth rendering
+  // batch tiny deltas to the next animation frame
   let pending = ''
   let raf = 0
   const flush = () => {
@@ -123,11 +119,22 @@ async function send() {
       },
       (err: any) => {
         error.value = typeof err === 'string' ? err : JSON.stringify(err, null, 2)
-        // cancel() will also clear stop, but onDone handles it anyway
       },
       {
         debug: false,
-        onDone: () => { stop.value = null }   // ✅ allow next send
+        // ✅ When the stream ends, record interaction and refresh transcript
+        onDone: async () => {
+          stop.value = null
+          try {
+            await recordInteraction({
+              player_entry: userMsg.content,
+              game_response: assistant.content,
+            })
+            transcript.value = await fetchCurrentTranscript()
+          } catch (e: any) {
+            error.value = `MCP error: ${e?.message ?? String(e)}`
+          }
+        }
       }
     )
   } catch (e: any) {
@@ -138,78 +145,91 @@ async function send() {
 </script>
 
 <template>
-  <div class="chat-layout">
-    <div class="toolbar">
-      <div class="left">
-        <label class="toolbar-item">
-          Provider:
-          <select v-model="provider">
-            <option value="anthropic">Anthropic</option>
-            <option value="openai">OpenAI</option>
-          </select>
-        </label>
-        <button class="btn" @click="newChat">New chat</button>
-      </div>
-      <div class="right">
-        <button class="btn secondary" @click="showSettings = !showSettings">⚙️ System</button>
-        <button class="btn danger" :disabled="!stop" @click="cancel">Cancel</button>
-      </div>
-    </div>
-
-    <transition name="fade">
-      <div v-if="showSettings" class="settings">
-        <div class="settings-row">
-          <label class="settings-label">System message</label>
-          <textarea
-            v-model="systemMsg"
-            class="settings-input"
-            rows="4"
-            placeholder="Enter the system prompt for this chat..."
-          />
+  <div class="layout">
+    <div class="left">
+      <div class="toolbar">
+        <div class="left-side">
+          <label class="toolbar-item">
+            Provider:
+            <select v-model="provider">
+              <option value="anthropic">Anthropic</option>
+              <option value="openai">OpenAI</option>
+            </select>
+          </label>
+          <button class="btn" @click="newChat">New chat</button>
         </div>
-        <div class="settings-actions">
-          <button class="btn" @click="resetSystem">Reset to default</button>
-          <span class="hint">Saved to this browser (localStorage)</span>
+        <div class="right-side">
+          <button class="btn secondary" @click="showSettings = !showSettings">⚙️ System</button>
+          <button class="btn secondary" @click="showTranscript = !showTranscript">{{ showTranscript ? 'Hide' : 'Show' }} Transcript</button>
+          <button class="btn danger" :disabled="!stop" @click="cancel">Cancel</button>
         </div>
       </div>
-    </transition>
 
-    <div ref="chatBox" class="chat-box">
-      <div v-for="(m, i) in visibleMessages" :key="i" class="msg" :class="m.role">
-        <strong class="role">{{ m.role }}</strong>
-        <div class="bubble">
-          <StreamMarkdown v-if="m.role === 'assistant'" :source="m.content" />
-          <div v-else class="user-text">{{ m.content }}</div>
+      <transition name="fade">
+        <div v-if="showSettings" class="settings">
+          <div class="settings-row">
+            <label class="settings-label">System message</label>
+            <textarea
+              v-model="systemMsg"
+              class="settings-input"
+              rows="4"
+              placeholder="Enter the system prompt for this chat..."
+            />
+          </div>
+          <div class="settings-actions">
+            <button class="btn" @click="resetSystem">Reset to default</button>
+            <span class="hint">Saved to this browser (localStorage)</span>
+          </div>
+        </div>
+      </transition>
+
+      <div ref="chatBox" class="chat-box">
+        <div v-for="(m, i) in visibleMessages" :key="i" class="msg" :class="m.role">
+          <strong class="role">{{ m.role }}</strong>
+          <div class="bubble">
+            <StreamMarkdown v-if="m.role === 'assistant'" :source="m.content" />
+            <div v-else class="user-text">{{ m.content }}</div>
+          </div>
         </div>
       </div>
+
+      <div class="composer">
+        <textarea
+          v-model="userInput"
+          class="input"
+          placeholder="Type a message… (Enter to send, Shift+Enter for newline)"
+          rows="3"
+          @keydown="onComposerKeydown"
+        />
+        <button class="send btn" @click="send" :disabled="!userInput.trim()">Send</button>
+      </div>
+
+      <pre v-if="error" class="error">⚠️ {{ error }}</pre>
     </div>
 
-    <div class="composer">
-      <textarea
-        v-model="userInput"
-        class="input"
-        placeholder="Type a message… (Enter to send, Shift+Enter for newline)"
-        rows="3"
-        @keydown="onComposerKeydown"
-      />
-      <button class="send btn" @click="send" :disabled="!userInput.trim()">Send</button>
-    </div>
-
-    <pre v-if="error" class="error">⚠️ {{ error }}</pre>
+    <aside v-if="showTranscript" class="right">
+      <h3>Transcript</h3>
+      <div class="transcript">
+        <StreamMarkdown :source="transcript || '_No transcript yet_'"/>
+      </div>
+    </aside>
   </div>
 </template>
 
 <style scoped>
-.chat-layout { display: flex; flex-direction: column; gap: 12px; max-width: 860px; margin: 0 auto; padding: 16px; }
+.layout { display: grid; grid-template-columns: 1fr 360px; gap: 16px; max-width: 1200px; margin: 0 auto; padding: 16px; }
+.left { display: flex; flex-direction: column; gap: 12px; }
+.right { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; background: #f8fafc; overflow:auto; max-height: 80vh; }
+.right h3 { margin: 0 0 8px; }
+
 .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-.left, .right { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.left-side, .right-side { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .toolbar-item { display: flex; gap: 8px; align-items: center; }
 .btn { padding: 8px 14px; border: 0; border-radius: 8px; background: #111; color: #fff; cursor: pointer; }
 .btn.secondary { background: #334155; }
 .btn.danger { background: #b91c1c; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 
-/* Settings panel */
 .settings { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; background: #f8fafc; }
 .settings-row { display: grid; grid-template-columns: 140px 1fr; gap: 12px; align-items: start; }
 .settings-label { padding-top: 6px; color: #475569; }
@@ -217,7 +237,6 @@ async function send() {
 .settings-actions { display: flex; gap: 12px; align-items: center; margin-top: 8px; }
 .hint { color: #64748b; font-size: 12px; }
 
-/* Messages */
 .chat-box { height: 60vh; overflow: auto; border: 1px solid #ddd; border-radius: 8px; padding: 12px; background: #fafafa; }
 .msg { display: flex; gap: 8px; margin: 6px 0; }
 .msg.user .bubble { background: #e8f0fe; }
@@ -226,15 +245,14 @@ async function send() {
 .bubble { padding: 8px 10px; border-radius: 10px; white-space: normal; flex: 1; }
 .user-text { white-space: pre-wrap; }
 
-/* Composer */
 .composer { display: flex; gap: 8px; align-items: flex-end; }
 .input { flex: 1; resize: vertical; padding: 10px; border-radius: 8px; border: 1px solid #ccc; }
 .send { margin-left: 6px; }
 
-/* Error */
 .error { color: #b00020; white-space: pre-wrap; background: #fff3f3; border: 1px solid #f3c0c0; border-radius: 8px; padding: 8px; }
 
-/* transitions */
 .fade-enter-active, .fade-leave-active { transition: opacity .15s ease; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
+
+.transcript { max-height: calc(80vh - 40px); overflow: auto; }
 </style>
