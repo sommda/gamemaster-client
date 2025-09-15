@@ -33,6 +33,49 @@ const chatBox = ref<HTMLElement | null>(null)
 const showTranscript = ref(true)
 const transcript = ref<string>('') // latest transcript text
 
+// --- character panel ---
+type Character = {
+  id: string
+  name: string
+  hit_points_current: number
+  hit_points_max: number
+  player_name?: string | null
+}
+const characters = ref<Character[]>([])
+
+async function fetchCharacters(): Promise<void> {
+  try {
+    const c = await getClient()
+    const r = await c.readResource({ uri: 'resource://current_campaign/characters' })
+    // SDK returns a ResourceContents envelope; normalize common shapes
+    const contents = (r as any)?.contents ?? (r as any)?.content ?? r
+    let characterData: any[] = []
+
+    if (Array.isArray(contents) && contents[0]?.text) {
+      characterData = JSON.parse(contents[0].text)
+    } else if (typeof contents?.text === 'string') {
+      characterData = JSON.parse(contents.text)
+    } else if (Array.isArray(contents)) {
+      characterData = contents
+    } else if (Array.isArray(r)) {
+      characterData = r as any[]
+    } else {
+      characterData = []
+    }
+
+    characters.value = characterData.map((char: any) => ({
+      id: char.id,
+      name: char.name,
+      hit_points_current: char.hit_points_current,
+      hit_points_max: char.hit_points_max,
+      player_name: char.player_name
+    }))
+  } catch (e: any) {
+    console.error('Failed to fetch characters:', e)
+    characters.value = []
+  }
+}
+
 function scrollToBottom() {
   nextTick(() => chatBox.value?.scrollTo({ top: chatBox.value!.scrollHeight, behavior: 'smooth' }))
 }
@@ -54,6 +97,7 @@ function newChat() {
   error.value = null
   userInput.value = ''
   transcript.value = ''
+  characters.value = []
 }
 
 function resetSystem() {
@@ -131,6 +175,7 @@ async function send() {
               game_response: assistant.content,
             })
             transcript.value = await fetchCurrentTranscript()
+            await fetchCharacters()
           } catch (e: any) {
             error.value = `MCP error: ${e?.message ?? String(e)}`
           }
@@ -208,9 +253,27 @@ async function send() {
     </div>
 
     <aside v-if="showTranscript" class="right">
-      <h3>Transcript</h3>
-      <div class="transcript">
-        <StreamMarkdown :source="transcript || '_No transcript yet_'"/>
+      <div class="transcript-section">
+        <h3>Transcript</h3>
+        <div class="transcript">
+          <StreamMarkdown :source="transcript || '_No transcript yet_'"/>
+        </div>
+      </div>
+
+      <div class="characters-section">
+        <h3>Characters</h3>
+        <div class="characters">
+          <div v-if="characters.length === 0" class="no-characters">
+            _No characters available_
+          </div>
+          <div v-for="character in characters" :key="character.id" class="character-card">
+            <div class="character-name">{{ character.name }}</div>
+            <div v-if="character.player_name" class="character-player">{{ character.player_name }}</div>
+            <div class="character-hp">
+              {{ character.hit_points_current }} / {{ character.hit_points_max }} HP
+            </div>
+          </div>
+        </div>
       </div>
     </aside>
   </div>
@@ -219,7 +282,7 @@ async function send() {
 <style scoped>
 .layout { display: grid; grid-template-columns: 1fr 360px; gap: 16px; max-width: 1200px; margin: 0 auto; padding: 16px; }
 .left { display: flex; flex-direction: column; gap: 12px; }
-.right { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; background: #f8fafc; overflow:auto; max-height: 80vh; }
+.right { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; background: #f8fafc; max-height: 80vh; display: flex; flex-direction: column; gap: 12px; }
 .right h3 { margin: 0 0 8px; }
 
 .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
@@ -254,5 +317,37 @@ async function send() {
 .fade-enter-active, .fade-leave-active { transition: opacity .15s ease; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
 
-.transcript { max-height: calc(80vh - 40px); overflow: auto; }
+.transcript-section { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.transcript { flex: 1; overflow: auto; }
+
+.characters-section { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.characters { flex: 1; overflow: auto; }
+
+.no-characters { color: #64748b; font-style: italic; }
+
+.character-card {
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 8px;
+  margin-bottom: 8px;
+  background: #fff;
+}
+
+.character-name {
+  font-weight: bold;
+  color: #1f2937;
+  margin-bottom: 2px;
+}
+
+.character-player {
+  font-size: 12px;
+  color: #6b7280;
+  margin-bottom: 4px;
+}
+
+.character-hp {
+  font-size: 14px;
+  color: #374151;
+  font-weight: 500;
+}
 </style>
