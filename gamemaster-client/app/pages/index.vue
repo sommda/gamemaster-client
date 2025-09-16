@@ -40,8 +40,22 @@ type Character = {
   hit_points_current: number
   hit_points_max: number
   player_name?: string | null
+  character_class?: any
+  race?: any
+  abilities?: any
+  armor_class?: number
+  inventory?: any[]
+  equipment?: any
+  spells_known?: any[]
+  background?: string
+  alignment?: string
+  description?: string
+  bio?: string
+  [key: string]: any // Allow for other Character model fields
 }
 const characters = ref<Character[]>([])
+const selectedCharacter = ref<Character | null>(null)
+const characterViewMode = ref<'summary' | 'detail'>('summary')
 
 async function fetchCharacters(): Promise<void> {
   try {
@@ -68,7 +82,19 @@ async function fetchCharacters(): Promise<void> {
       name: char.name,
       hit_points_current: char.hit_points_current,
       hit_points_max: char.hit_points_max,
-      player_name: char.player_name
+      player_name: char.player_name,
+      character_class: char.character_class,
+      race: char.race,
+      abilities: char.abilities,
+      armor_class: char.armor_class,
+      inventory: char.inventory,
+      equipment: char.equipment,
+      spells_known: char.spells_known,
+      background: char.background,
+      alignment: char.alignment,
+      description: char.description,
+      bio: char.bio,
+      ...char // Include any other fields from the full Character model
     }))
   } catch (e: any) {
     console.error('Failed to fetch characters:', e)
@@ -98,6 +124,18 @@ function newChat() {
   userInput.value = ''
   transcript.value = ''
   characters.value = []
+  selectedCharacter.value = null
+  characterViewMode.value = 'summary'
+}
+
+function selectCharacter(character: Character) {
+  selectedCharacter.value = character
+  characterViewMode.value = 'detail'
+}
+
+function returnToCharacterSummary() {
+  selectedCharacter.value = null
+  characterViewMode.value = 'summary'
 }
 
 function resetSystem() {
@@ -261,16 +299,133 @@ async function send() {
       </div>
 
       <div class="characters-section">
-        <h3>Characters</h3>
-        <div class="characters">
+        <h3>Characters
+          <button
+            v-if="characterViewMode === 'detail'"
+            @click="returnToCharacterSummary"
+            class="btn back-btn"
+          >
+            ← Back
+          </button>
+        </h3>
+
+        <!-- Character Summary View -->
+        <div v-if="characterViewMode === 'summary'" class="characters">
           <div v-if="characters.length === 0" class="no-characters">
             _No characters available_
           </div>
-          <div v-for="character in characters" :key="character.id" class="character-card">
+          <div
+            v-for="character in characters"
+            :key="character.id"
+            class="character-card clickable"
+            @click="selectCharacter(character)"
+          >
             <div class="character-name">{{ character.name }}</div>
             <div v-if="character.player_name" class="character-player">{{ character.player_name }}</div>
             <div class="character-hp">
               {{ character.hit_points_current }} / {{ character.hit_points_max }} HP
+            </div>
+          </div>
+        </div>
+
+        <!-- Character Detail View -->
+        <div v-else-if="characterViewMode === 'detail' && selectedCharacter" class="character-details">
+          <div class="character-header">
+            <h4>{{ selectedCharacter.name }}</h4>
+            <div v-if="selectedCharacter.player_name" class="player-name">Player: {{ selectedCharacter.player_name }}</div>
+          </div>
+
+          <div class="character-info-grid">
+            <!-- Basic Info -->
+            <div class="info-section">
+              <h5>Basic Info</h5>
+              <div v-if="selectedCharacter.character_class" class="info-item">
+                <strong>Class:</strong> {{ selectedCharacter.character_class.name }}
+                <span v-if="selectedCharacter.character_class.level"> (Level {{ selectedCharacter.character_class.level }})</span>
+                <span v-if="selectedCharacter.character_class.subclass"> - {{ selectedCharacter.character_class.subclass }}</span>
+              </div>
+              <div v-if="selectedCharacter.race" class="info-item">
+                <strong>Race:</strong> {{ selectedCharacter.race.name }}
+                <span v-if="selectedCharacter.race.subrace"> ({{ selectedCharacter.race.subrace }})</span>
+              </div>
+              <div v-if="selectedCharacter.background" class="info-item">
+                <strong>Background:</strong> {{ selectedCharacter.background }}
+              </div>
+              <div v-if="selectedCharacter.alignment" class="info-item">
+                <strong>Alignment:</strong> {{ selectedCharacter.alignment }}
+              </div>
+            </div>
+
+            <!-- Combat Stats -->
+            <div class="info-section">
+              <h5>Combat Stats</h5>
+              <div class="info-item">
+                <strong>HP:</strong> {{ selectedCharacter.hit_points_current }} / {{ selectedCharacter.hit_points_max }}
+              </div>
+              <div v-if="selectedCharacter.armor_class" class="info-item">
+                <strong>AC:</strong> {{ selectedCharacter.armor_class }}
+              </div>
+              <div v-if="selectedCharacter.proficiency_bonus" class="info-item">
+                <strong>Proficiency Bonus:</strong> +{{ selectedCharacter.proficiency_bonus }}
+              </div>
+            </div>
+
+            <!-- Ability Scores -->
+            <div v-if="selectedCharacter.abilities" class="info-section">
+              <h5>Ability Scores</h5>
+              <div class="abilities-grid">
+                <div v-for="(ability, name) in selectedCharacter.abilities" :key="name" class="ability-score">
+                  <div class="ability-name">{{ String(name).charAt(0).toUpperCase() + String(name).slice(1) }}</div>
+                  <div class="ability-value">{{ ability.score }} ({{ ability.mod >= 0 ? '+' : '' }}{{ ability.mod }})</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Equipment -->
+            <div v-if="selectedCharacter.equipment || selectedCharacter.inventory" class="info-section">
+              <h5>Equipment</h5>
+              <div v-if="selectedCharacter.equipment" class="equipment-section">
+                <div v-for="(item, slot) in selectedCharacter.equipment" :key="slot" class="info-item">
+                  <strong>{{ String(slot).replace('_', ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()) }}:</strong>
+                  {{ item ? item.name : 'None' }}
+                </div>
+              </div>
+              <div v-if="selectedCharacter.inventory && selectedCharacter.inventory.length > 0" class="inventory-section">
+                <strong>Inventory:</strong>
+                <ul class="inventory-list">
+                  <li v-for="item in selectedCharacter.inventory.slice(0, 5)" :key="item.id">
+                    {{ item.name }} <span v-if="item.quantity > 1">({{ item.quantity }})</span>
+                  </li>
+                  <li v-if="selectedCharacter.inventory.length > 5" class="more-items">
+                    ...and {{ selectedCharacter.inventory.length - 5 }} more items
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <!-- Spells (if applicable) -->
+            <div v-if="selectedCharacter.spells_known && selectedCharacter.spells_known.length > 0" class="info-section">
+              <h5>Spells</h5>
+              <div class="spells-list">
+                <div v-for="spell in selectedCharacter.spells_known.slice(0, 3)" :key="spell.id" class="spell-item">
+                  <strong>{{ spell.name }}</strong> (Level {{ spell.level }})
+                  <div class="spell-school">{{ spell.school }}</div>
+                </div>
+                <div v-if="selectedCharacter.spells_known.length > 3" class="more-items">
+                  ...and {{ selectedCharacter.spells_known.length - 3 }} more spells
+                </div>
+              </div>
+            </div>
+
+            <!-- Description/Bio -->
+            <div v-if="selectedCharacter.description || selectedCharacter.bio" class="info-section full-width">
+              <h5>Character Description</h5>
+              <div v-if="selectedCharacter.description" class="description">
+                <strong>Appearance:</strong> {{ selectedCharacter.description }}
+              </div>
+              <div v-if="selectedCharacter.bio" class="bio">
+                <strong>Background:</strong> {{ selectedCharacter.bio }}
+              </div>
             </div>
           </div>
         </div>
@@ -335,7 +490,7 @@ async function send() {
 
 .character-name {
   font-weight: bold;
-  color: #1f2937;
+  color: hsl(215, 28%, 17%);
   margin-bottom: 2px;
 }
 
@@ -349,5 +504,150 @@ async function send() {
   font-size: 14px;
   color: #374151;
   font-weight: 500;
+}
+
+.character-card.clickable {
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.character-card.clickable:hover {
+  background: #f3f4f6;
+  border-color: #9ca3af;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.back-btn {
+  font-size: 12px;
+  padding: 4px 8px;
+  margin-left: 8px;
+}
+
+.character-details {
+  flex: 1;
+  overflow: auto;
+}
+
+.character-header {
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.character-header h4 {
+  margin: 0;
+  color: #1f2937;
+  font-size: 18px;
+}
+
+.player-name {
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 4px;
+}
+
+.character-info-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+.info-section {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.info-section.full-width {
+  grid-column: 1 / -1;
+}
+
+.info-section h5 {
+  margin: 0 0 8px 0;
+  color: #374151;
+  font-size: 14px;
+  font-weight: 600;
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 4px;
+}
+
+.info-item {
+  margin: 6px 0;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.info-item strong {
+  color: #4b5563;
+}
+
+.abilities-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.ability-score {
+  text-align: center;
+  padding: 6px;
+  background: #f9fafb;
+  border-radius: 4px;
+  border: 1px solid #e5e7eb;
+}
+
+.ability-name {
+  font-size: 10px;
+  font-weight: bold;
+  color: #6b7280;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+
+.ability-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.inventory-list {
+  list-style: none;
+  padding: 0;
+  margin: 4px 0 0 0;
+  font-size: 12px;
+}
+
+.inventory-list li {
+  padding: 2px 0;
+  color: #4b5563;
+}
+
+.spell-item {
+  margin: 6px 0;
+  padding: 4px;
+  background: #f9fafb;
+  border-radius: 4px;
+  border: 1px solid #e5e7eb;
+}
+
+.spell-school {
+  font-size: 11px;
+  color: #6b7280;
+  font-style: italic;
+}
+
+.more-items {
+  color: #6b7280;
+  font-style: italic;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.description, .bio {
+  margin: 8px 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #4b5563;
 }
 </style>
