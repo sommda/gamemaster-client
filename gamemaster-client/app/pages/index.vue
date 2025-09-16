@@ -6,7 +6,7 @@ import { useChatStream } from '@/composables/useChatStream'
 type Msg = { role: 'system' | 'user' | 'assistant'; content: string }
 
 const { openChatStream } = useChatStream()
-const { recordInteraction, fetchCurrentTranscript, getClient } = useMcpClient()
+const { recordInteraction, fetchCurrentTranscript, fetchTranscriptAsMessages, getClient } = useMcpClient()
 
 // --- provider + models ---
 const provider = ref<'anthropic' | 'openai'>('anthropic')
@@ -29,9 +29,6 @@ const error = ref<string | null>(null)
 const stop = ref<null | (() => void)>(null) // active stream closer
 const chatBox = ref<HTMLElement | null>(null)
 
-// --- transcript panel ---
-const showTranscript = ref(true)
-const transcript = ref<string>('') // latest transcript text
 
 // --- character panel ---
 type Character = {
@@ -122,7 +119,6 @@ function newChat() {
   messages.value = [{ role: 'system', content: systemMsg.value }]
   error.value = null
   userInput.value = ''
-  transcript.value = ''
   characters.value = []
   selectedCharacter.value = null
   characterViewMode.value = 'summary'
@@ -138,14 +134,32 @@ function returnToCharacterSummary() {
   characterViewMode.value = 'summary'
 }
 
+async function loadTranscriptToMessages() {
+  try {
+    const transcriptMessages = await fetchTranscriptAsMessages()
+
+    // Always preserve the current system message at the start
+    const systemMessage = messages.value[0]
+
+    // Replace messages with system message + transcript messages
+    messages.value = [systemMessage, ...transcriptMessages]
+  } catch (e: any) {
+    console.error('Failed to load transcript:', e)
+  }
+}
+
 function resetSystem() {
   systemMsg.value = DEFAULT_SYSTEM
 }
 
-// Persist + bind system message
-onMounted(() => {
+// Persist + bind system message and load transcript on mount
+onMounted(async () => {
   try { const saved = localStorage.getItem('systemMessage'); if (saved) systemMsg.value = saved } catch {}
   messages.value[0] = { role: 'system', content: systemMsg.value }
+
+  // Load existing transcript on page load
+  await loadTranscriptToMessages()
+  await fetchCharacters()
 })
 watch(systemMsg, (val) => {
   if (!messages.value.length || messages.value[0].role !== 'system') {
@@ -204,7 +218,7 @@ async function send() {
       },
       {
         debug: false,
-        // ✅ When the stream ends, record interaction and refresh transcript
+        // ✅ When the stream ends, record interaction and refresh chat history
         onDone: async () => {
           stop.value = null
           try {
@@ -212,7 +226,7 @@ async function send() {
               player_entry: userMsg.content,
               game_response: assistant.content,
             })
-            transcript.value = await fetchCurrentTranscript()
+            await loadTranscriptToMessages()
             await fetchCharacters()
           } catch (e: any) {
             error.value = `MCP error: ${e?.message ?? String(e)}`
@@ -243,7 +257,6 @@ async function send() {
         </div>
         <div class="right-side">
           <button class="btn secondary" @click="showSettings = !showSettings">⚙️ System</button>
-          <button class="btn secondary" @click="showTranscript = !showTranscript">{{ showTranscript ? 'Hide' : 'Show' }} Transcript</button>
           <button class="btn danger" :disabled="!stop" @click="cancel">Cancel</button>
         </div>
       </div>
@@ -290,14 +303,7 @@ async function send() {
       <pre v-if="error" class="error">⚠️ {{ error }}</pre>
     </div>
 
-    <aside v-if="showTranscript" class="right">
-      <div class="transcript-section">
-        <h3>Transcript</h3>
-        <div class="transcript">
-          <StreamMarkdown :source="transcript || '_No transcript yet_'"/>
-        </div>
-      </div>
-
+    <aside class="right">
       <div class="characters-section">
         <h3>Characters
           <button
@@ -471,9 +477,6 @@ async function send() {
 
 .fade-enter-active, .fade-leave-active { transition: opacity .15s ease; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
-
-.transcript-section { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-.transcript { flex: 1; overflow: auto; }
 
 .characters-section { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .characters { flex: 1; overflow: auto; }

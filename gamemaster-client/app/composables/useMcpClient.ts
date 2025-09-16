@@ -82,10 +82,60 @@ export function useMcpClient() {
     })
   }
 
+  type Msg = { role: 'system' | 'user' | 'assistant'; content: string }
+
+  async function fetchTranscriptAsMessages(): Promise<Msg[]> {
+    return withClient(async (c) => {
+      const r = await c.readResource({ uri: 'resource://current_transcript' })
+      // SDK returns a ResourceContents envelope; normalize common shapes
+      const contents = (r as any)?.contents ?? (r as any)?.content ?? r
+
+      let transcriptData: any = null
+
+      if (Array.isArray(contents) && contents[0]?.text) {
+        transcriptData = JSON.parse(contents[0].text)
+      } else if (typeof contents?.text === 'string') {
+        transcriptData = JSON.parse(contents.text)
+      } else if (typeof contents === 'object') {
+        transcriptData = contents
+      } else if (typeof r === 'object') {
+        transcriptData = r
+      }
+
+      // Handle both formats: entries array or direct entries
+      const entries = transcriptData?.entries || transcriptData || []
+
+      if (!Array.isArray(entries)) {
+        return []
+      }
+
+      const messages: Msg[] = []
+
+      // Convert transcript entries to message format
+      for (const entry of entries) {
+        if (entry.player_entry) {
+          messages.push({
+            role: 'user',
+            content: entry.player_entry
+          })
+        }
+
+        if (entry.game_response) {
+          messages.push({
+            role: 'assistant',
+            content: entry.game_response
+          })
+        }
+      }
+
+      return messages
+    })
+  }
+
   // (Optional) expose the raw client if you need listTools, listResources, etc.
   async function getClient(): Promise<Client> {
     return connectClient()
   }
 
-  return { getClient, recordInteraction, fetchCurrentTranscript }
+  return { getClient, recordInteraction, fetchCurrentTranscript, fetchTranscriptAsMessages }
 }
