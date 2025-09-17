@@ -137,5 +137,49 @@ export function useMcpClient() {
     return connectClient()
   }
 
-  return { getClient, recordInteraction, fetchCurrentTranscript, fetchTranscriptAsMessages }
+  async function fetchCurrentCampaign(): Promise<any> {
+    return withClient(async (c) => {
+      const r = await c.readResource({ uri: 'resource://current_campaign' })
+      // SDK returns a ResourceContents envelope; normalize common shapes
+      const contents = (r as any)?.contents ?? (r as any)?.content ?? r
+
+      let campaignData: any = null
+
+      if (Array.isArray(contents) && contents[0]?.text) {
+        campaignData = JSON.parse(contents[0].text)
+      } else if (typeof contents?.text === 'string') {
+        campaignData = JSON.parse(contents.text)
+      } else if (typeof contents === 'object') {
+        campaignData = contents
+      } else if (typeof r === 'object') {
+        campaignData = r
+      }
+
+      return campaignData || {}
+    })
+  }
+
+  async function fetchCurrentGameState(): Promise<any> {
+    return withClient(async (c) => {
+      const r = await c.readResource({ uri: 'resource://current_campaign/game_state' })
+      // SDK returns a ResourceContents envelope; normalize common shapes
+      const contents = (r as any)?.contents ?? (r as any)?.content ?? r
+
+      let gameStateData: any = null
+
+      if (Array.isArray(contents) && contents[0]?.text) {
+        gameStateData = JSON.parse(contents[0].text)
+      } else if (typeof contents?.text === 'string') {
+        gameStateData = JSON.parse(contents.text)
+      } else if (typeof contents === 'object') {
+        gameStateData = contents
+      } else if (typeof r === 'object') {
+        gameStateData = r
+      }
+
+      return gameStateData || {}
+    })
+  }
+
+  return { getClient, recordInteraction, fetchCurrentTranscript, fetchTranscriptAsMessages, fetchCurrentCampaign, fetchCurrentGameState }
 }
