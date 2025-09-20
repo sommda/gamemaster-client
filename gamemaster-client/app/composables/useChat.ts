@@ -4,15 +4,21 @@ import { useMcpClient } from './useMcpClient'
 
 export type Msg = { role: 'system' | 'user' | 'assistant'; content: string }
 
+export type ProviderMode =
+  | 'anthropic-server-mcp'    // Current: Anthropic handles MCP
+  | 'anthropic-client-mcp'    // New: Client handles tools
+  | 'openai-client-mcp'       // New: OpenAI with client tools
+
 export function useChat() {
   const { openChatStream } = useChatStream()
   const { recordInteraction, fetchTranscriptAsMessages, fetchCurrentPrompt } = useMcpClient()
 
   // --- provider + models ---
-  const provider = ref<'anthropic' | 'openai'>('anthropic')
-  const modelByProvider: Record<string, string> = {
-    anthropic: 'claude-sonnet-4-20250514',
-    openai: 'gpt-5'
+  const provider = ref<ProviderMode>('anthropic-server-mcp')
+  const modelByProvider: Record<ProviderMode, string> = {
+    'anthropic-server-mcp': 'claude-sonnet-4-20250514',
+    'anthropic-client-mcp': 'claude-sonnet-4-20250514',
+    'openai-client-mcp': 'gpt-5'
   }
 
   // --- system message (from MCP server) ---
@@ -76,8 +82,12 @@ export function useChat() {
     const assistant = reactive<Msg>({ role: 'assistant', content: '' })
     messages.value.push(assistant)
 
+    // Extract base provider for backward compatibility
+    const baseProvider = provider.value.split('-')[0] as 'anthropic' | 'openai'
+
     const payload = {
-      provider: provider.value,
+      provider: baseProvider,
+      providerMode: provider.value,
       model: modelByProvider[provider.value],
       system: currentPrompt.value,
       messages: messages.value.filter(m => m.role !== 'system'),

@@ -2,19 +2,20 @@
 import { ref, computed, nextTick } from 'vue'
 import ChatMessage from './ChatMessage.vue'
 import ChatComposer from './ChatComposer.vue'
+import type { ProviderMode } from '~/composables/useChat'
 
 type Msg = { role: 'system' | 'user' | 'assistant'; content: string }
 
 const props = defineProps<{
   messages: Msg[]
-  provider: string
+  provider: ProviderMode
   error: string | null
 }>()
 
 const emit = defineEmits<{
   send: [message: string]
   newChat: []
-  changeProvider: [provider: string]
+  changeProvider: [provider: ProviderMode]
   viewPrompt: []
 }>()
 
@@ -47,7 +48,7 @@ function newChat() {
   emit('newChat')
 }
 
-function changeProvider(provider: string) {
+function changeProvider(provider: ProviderMode) {
   emit('changeProvider', provider)
 }
 
@@ -67,9 +68,10 @@ defineExpose({
       <div class="left-side">
         <label class="toolbar-item">
           Provider:
-          <select :value="provider" @change="changeProvider(($event.target as HTMLSelectElement).value)">
-            <option value="anthropic">Anthropic</option>
-            <option value="openai">OpenAI</option>
+          <select :value="provider" @change="changeProvider(($event.target as HTMLSelectElement).value as ProviderMode)">
+            <option value="anthropic-server-mcp">Anthropic (Server MCP)</option>
+            <option value="anthropic-client-mcp">Anthropic (Client MCP)</option>
+            <option value="openai-client-mcp">OpenAI (Client MCP)</option>
           </select>
         </label>
         <button class="btn" @click="newChat">New chat</button>

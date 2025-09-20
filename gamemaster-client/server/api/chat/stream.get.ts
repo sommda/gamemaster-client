@@ -34,10 +34,25 @@ export default defineEventHandler(async (event) => {
     const system = body.system ?? systemFromList
     const chatMsgs = body.messages.filter((m: any) => m.role !== 'system')
 
+    // Detect provider mode from providerMode field or infer from provider
+    const providerMode = body.providerMode || body.provider
+    const isServerMcp = providerMode === 'anthropic-server-mcp' || providerMode === 'anthropic'
+    const isClientMcp = providerMode?.endsWith('-client-mcp')
+    const baseProvider = providerMode?.split('-')[0] || body.provider
+
+    if (debug) sendEvt('debug', { providerMode, isServerMcp, isClientMcp, baseProvider })
+
+    if (isClientMcp) {
+      // Route to client MCP handler
+      await handleClientMcpMode(body, baseProvider, system, chatMsgs, sendEvt, sendError, res)
+      return
+    }
+
+    // Original server MCP path
     let url = '', headers: Record<string,string> = {}, payload: any = {}
     const idem = crypto.randomUUID()
 
-    if (body.provider === 'openai') {
+    if (baseProvider === 'openai') {
       const { apiKey, baseURL } = config.openai ?? {}
       if (!apiKey) { sendError('missing_key', { provider: 'openai' }); res.end(); return }
       url = `${(baseURL || 'https://api.openai.com/v1').replace(/\/+$/, '')}/responses`
@@ -54,7 +69,7 @@ export default defineEventHandler(async (event) => {
         temperature: body.temperature ?? 0.7,
         max_output_tokens: body.maxTokens ?? 1024
       }
-    } else if (body.provider === 'anthropic') {
+    } else if (baseProvider === 'anthropic') {
       const { apiKey, baseURL, version } = config.anthropic ?? {}
       if (!apiKey) { sendError('missing_key', { provider: 'anthropic' }); res.end(); return }
 
@@ -96,7 +111,7 @@ export default defineEventHandler(async (event) => {
         mcp_servers: mcpServers
       }
     } else {
-      sendError('unsupported_provider', { provider: body.provider })
+      sendError('unsupported_provider', { provider: baseProvider, providerMode })
       res.end(); return
     }
 
@@ -179,3 +194,180 @@ export default defineEventHandler(async (event) => {
     res.end()
   }
 })
+
+// Handle client MCP mode (tools managed by client)
+async function handleClientMcpMode(
+  body: any,
+  baseProvider: string,
+  system: string,
+  chatMsgs: any[],
+  sendEvt: (name: string, obj: any) => void,
+  sendError: (code: string, info: any) => void,
+  res: any
+) {
+  const config = useRuntimeConfig()
+
+  try {
+    let url = '', headers: Record<string, string> = {}
+    const idem = crypto.randomUUID()
+
+    if (baseProvider === 'anthropic') {
+      const { apiKey, baseURL, version } = config.anthropic ?? {}
+      if (!apiKey) {
+        sendError('missing_key', { provider: 'anthropic' })
+        res.end()
+        return
+      }
+
+      url = `${(baseURL || 'https://api.anthropic.com/v1').replace(/\/+$/, '')}/messages`
+      headers = {
+        'x-api-key': apiKey,
+        'anthropic-version': version || '2023-06-01',
+        'Content-Type': 'application/json',
+        'Idempotency-Key': idem
+        // Note: NO 'anthropic-beta': 'mcp-client-2025-04-04' header for client MCP
+      }
+
+      // TODO: Add tool definitions from MCP server
+      // For now, just send without tools to test basic routing
+      const payload = {
+        model: body.model,
+        messages: chatMsgs.map((m: any) => ({ role: m.role, content: m.content })),
+        ...(system ? { system } : {}),
+        stream: true,
+        temperature: body.temperature ?? 0.7,
+        max_tokens: body.maxTokens ?? 1024
+        // tools: await getAnthropicToolDefinitions() // TODO: Phase 3
+      }
+
+      sendEvt('debug', { mode: 'client-mcp', provider: 'anthropic', toolsEnabled: false })
+      await streamSimpleResponse(url, headers, payload, sendEvt, sendError, res, baseProvider)
+
+    } else if (baseProvider === 'openai') {
+      const { apiKey, baseURL } = config.openai ?? {}
+      if (!apiKey) {
+        sendError('missing_key', { provider: 'openai' })
+        res.end()
+        return
+      }
+
+      url = `${(baseURL || 'https://api.openai.com/v1').replace(/\/+$/, '')}/chat/completions`
+      headers = {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': idem
+      }
+
+      const payload = {
+        model: body.model,
+        messages: chatMsgs.map((m: any) => ({ role: m.role, content: m.content })),
+        stream: true,
+        temperature: body.temperature ?? 0.7,
+        max_tokens: body.maxTokens ?? 1024
+        // tools: await getOpenAIToolDefinitions() // TODO: Phase 3
+      }
+
+      if (system) {
+        payload.messages.unshift({ role: 'system', content: system })
+      }
+
+      sendEvt('debug', { mode: 'client-mcp', provider: 'openai', toolsEnabled: false })
+      await streamSimpleResponse(url, headers, payload, sendEvt, sendError, res, baseProvider)
+
+    } else {
+      sendError('unsupported_client_mcp_provider', { provider: baseProvider })
+      res.end()
+    }
+  } catch (e: any) {
+    sendError('client_mcp_exception', { message: String(e?.message || e) })
+    res.end()
+  }
+}
+
+// Stream a simple response without tool calling (for Phase 2)
+async function streamSimpleResponse(
+  url: string,
+  headers: Record<string, string>,
+  payload: any,
+  sendEvt: (name: string, obj: any) => void,
+  sendError: (code: string, info: any) => void,
+  res: any,
+  provider: string
+) {
+  const send = (obj: any) => { res.write(`data: ${JSON.stringify(obj)}\n\n`); (res as any).flush?.() }
+
+  let upstream: Response
+  try {
+    upstream = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload)
+    })
+  } catch (e: any) {
+    sendError('upstream_fetch_failed', { message: String(e?.message || e) })
+    res.end()
+    return
+  }
+
+  if (!upstream.ok) {
+    const text = (await upstream.text().catch(() => '')) || ''
+    sendError('upstream_non_2xx', {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      details: text.slice(0, 4000)
+    })
+    res.end()
+    return
+  }
+
+  // Parse SSE stream
+  const reader = upstream.body!.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+
+    for (;;) {
+      const i = buf.indexOf('\n\n')
+      if (i === -1) break
+      const frame = buf.slice(0, i)
+      buf = buf.slice(i + 2)
+      const dataLines = frame.split('\n').filter(l => l.startsWith('data:')).map(l => l.slice(5).trimStart())
+      if (!dataLines.length) continue
+      const data = dataLines.join('\n').trim()
+      if (!data || data === '[DONE]' || data === 'DONE') continue
+
+      try {
+        const evt = JSON.parse(data)
+
+        // Handle Anthropic format
+        if (provider === 'anthropic' && evt?.type === 'content_block_delta' && evt?.delta?.type === 'text_delta') {
+          const t = evt.delta.text || ''
+          if (t) send({ text: t })
+          continue
+        }
+
+        // Handle OpenAI format
+        if (provider === 'openai' && evt?.choices?.[0]?.delta?.content) {
+          const t = evt.choices[0].delta.content
+          if (t) send({ text: t })
+          continue
+        }
+
+        // Error handling
+        if (evt?.type === 'error' && evt?.error?.message) {
+          sendError('provider_error', { provider, message: evt.error.message })
+          continue
+        }
+      } catch {
+        // Ignore non-JSON frames
+      }
+    }
+  }
+
+  send({ done: true })
+  res.end()
+}

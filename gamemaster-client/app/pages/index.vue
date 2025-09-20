@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 import ChatInterface from '@/components/Chat/ChatInterface.vue'
 import GameSidebar from '@/components/Sidebar/GameSidebar.vue'
-import { useChat } from '@/composables/useChat'
+import { useChat, type ProviderMode } from '@/composables/useChat'
 import { useGameData } from '@/composables/useGameData'
 
 // Initialize composables
@@ -54,7 +54,7 @@ async function handleViewPrompt() {
         :error="chat.error.value"
         @send="handleSend"
         @new-chat="handleNewChat"
-        @change-provider="(p: 'anthropic' | 'openai') => chat.provider.value = p"
+        @change-provider="(p: ProviderMode) => chat.provider.value = p"
         @view-prompt="handleViewPrompt"
       />
 
