@@ -1,44 +1,22 @@
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import ChatInterface from '@/components/Chat/ChatInterface.vue'
-import SystemSettings from '@/components/Settings/SystemSettings.vue'
 import GameSidebar from '@/components/Sidebar/GameSidebar.vue'
 import { useChat } from '@/composables/useChat'
 import { useGameData } from '@/composables/useGameData'
-import { useSettings } from '@/composables/useSettings'
 
 // Initialize composables
 const chat = useChat()
 const gameData = useGameData()
-const settings = useSettings()
 
 // Chat interface ref for scrolling
 const chatInterface = ref<InstanceType<typeof ChatInterface> | null>(null)
 
-// Initialize system message persistence
+// Initialize data on page load
 onMounted(async () => {
-  try {
-    const saved = localStorage.getItem('systemMessage')
-    if (saved) chat.systemMsg.value = saved
-  } catch {}
-
-  chat.messages.value[0] = { role: 'system', content: chat.systemMsg.value }
-
   // Load existing transcript and game data on page load
   await chat.loadTranscriptToMessages()
   await gameData.refreshGameData()
-})
-
-// Watch system message changes for persistence
-watch(chat.systemMsg, (val) => {
-  if (!chat.messages.value.length || chat.messages.value[0].role !== 'system') {
-    chat.messages.value.unshift({ role: 'system', content: val })
-  } else {
-    chat.messages.value[0] = { role: 'system', content: val }
-  }
-  try {
-    localStorage.setItem('systemMessage', val)
-  } catch {}
 })
 
 // Handle chat events
@@ -55,9 +33,15 @@ function handleNewChat() {
   gameData.characterViewMode.value = 'summary'
 }
 
-function handleResetSystem() {
-  chat.systemMsg.value = chat.DEFAULT_SYSTEM
+async function handleViewPrompt() {
+  try {
+    const prompt = await chat.viewCurrentPrompt()
+    alert(`Current System Prompt:\n\n${prompt}`)
+  } catch (e: any) {
+    alert(`Error fetching prompt: ${e?.message ?? String(e)}`)
+  }
 }
+
 </script>
 
 <template>
@@ -68,21 +52,18 @@ function handleResetSystem() {
         :messages="chat.messages.value"
         :provider="chat.provider.value"
         :error="chat.error.value"
-        :can-cancel="!!chat.stop.value"
         @send="handleSend"
-        @cancel="chat.cancel"
         @new-chat="handleNewChat"
-        @toggle-settings="settings.toggleSettings"
         @change-provider="(p: 'anthropic' | 'openai') => chat.provider.value = p"
+        @view-prompt="handleViewPrompt"
       />
 
-      <transition name="fade">
+      <!-- System settings component temporarily disabled -->
+      <!-- <transition name="fade">
         <SystemSettings
           v-if="settings.showSettings.value"
-          v-model:system-msg="chat.systemMsg.value"
-          @reset="handleResetSystem"
         />
-      </transition>
+      </transition> -->
     </div>
 
     <GameSidebar

@@ -9,15 +9,13 @@ const props = defineProps<{
   messages: Msg[]
   provider: string
   error: string | null
-  canCancel: boolean
 }>()
 
 const emit = defineEmits<{
   send: [message: string]
-  cancel: []
   newChat: []
-  toggleSettings: []
   changeProvider: [provider: string]
+  viewPrompt: []
 }>()
 
 const userInput = ref('')
@@ -45,20 +43,16 @@ function send() {
   scrollToBottom()
 }
 
-function cancel() {
-  emit('cancel')
-}
-
 function newChat() {
   emit('newChat')
 }
 
-function toggleSettings() {
-  emit('toggleSettings')
-}
-
 function changeProvider(provider: string) {
   emit('changeProvider', provider)
+}
+
+function viewPrompt() {
+  emit('viewPrompt')
 }
 
 // Expose scrollToBottom for parent component
@@ -81,8 +75,7 @@ defineExpose({
         <button class="btn" @click="newChat">New chat</button>
       </div>
       <div class="right-side">
-        <button class="btn secondary" @click="toggleSettings">⚙️ System</button>
-        <button class="btn danger" :disabled="!canCancel" @click="cancel">Cancel</button>
+        <button class="btn secondary" @click="viewPrompt">👁️ View Prompt</button>
       </div>
     </div>
 

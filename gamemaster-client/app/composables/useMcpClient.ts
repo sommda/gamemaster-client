@@ -1,5 +1,4 @@
 // composables/useMcpClient.ts
-import { ref } from 'vue'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
@@ -181,5 +180,35 @@ export function useMcpClient() {
     })
   }
 
-  return { getClient, recordInteraction, fetchCurrentTranscript, fetchTranscriptAsMessages, fetchCurrentCampaign, fetchCurrentGameState }
+  async function fetchCurrentPrompt(): Promise<string> {
+    return withClient(async (c) => {
+      const result = await c.getPrompt({ name: 'current_prompt', arguments: {} })
+
+      // Extract the prompt content from the result
+      if (result && result.messages && result.messages.length > 0) {
+        // Get the first message regardless of role
+        const firstMessage = result.messages[0]
+
+        if (firstMessage && firstMessage.content) {
+          // Handle the specific format: content.text for MCP prompts
+          if (firstMessage.content.type === 'text' && firstMessage.content.text) {
+            return firstMessage.content.text
+          }
+          // Fallback: handle if content is a string
+          else if (typeof firstMessage.content === 'string') {
+            return firstMessage.content
+          }
+          // Fallback: handle array format
+          else if (Array.isArray(firstMessage.content)) {
+            const textContent = firstMessage.content.find((content: any) => content.type === 'text')
+            return textContent?.text || ''
+          }
+        }
+      }
+
+      return 'You are a helpful assistant.' // fallback
+    })
+  }
+
+  return { getClient, recordInteraction, fetchCurrentTranscript, fetchTranscriptAsMessages, fetchCurrentCampaign, fetchCurrentGameState, fetchCurrentPrompt }
 }
