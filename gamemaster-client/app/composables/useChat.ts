@@ -1,6 +1,7 @@
 import { ref, reactive } from 'vue'
 import { useChatStream } from './useChatStream'
 import { useMcpClient } from './useMcpClient'
+import { useClientToolCalling } from './useClientToolCalling'
 
 export type Msg = { role: 'system' | 'user' | 'assistant'; content: string }
 
@@ -10,11 +11,12 @@ export type ProviderMode =
   | 'openai-client-mcp'       // New: OpenAI with client tools
 
 export function useChat() {
-  const { openChatStream } = useChatStream()
+  const { openChatStreamWithToolCalling } = useChatStream()
   const { recordInteraction, fetchTranscriptAsMessages, fetchCurrentPrompt } = useMcpClient()
+  const { enhancePayloadWithTools, isClientMcpMode } = useClientToolCalling()
 
   // --- provider + models ---
-  const provider = ref<ProviderMode>('anthropic-server-mcp')
+  const provider = ref<ProviderMode>('anthropic-client-mcp')
   const modelByProvider: Record<ProviderMode, string> = {
     'anthropic-server-mcp': 'claude-sonnet-4-20250514',
     'anthropic-client-mcp': 'claude-sonnet-4-20250514',
@@ -85,18 +87,37 @@ export function useChat() {
     // Extract base provider for backward compatibility
     const baseProvider = provider.value.split('-')[0] as 'anthropic' | 'openai'
 
-    const payload = {
+    let payload: any = {
       provider: baseProvider,
       providerMode: provider.value,
       model: modelByProvider[provider.value],
       system: currentPrompt.value,
       messages: messages.value.filter(m => m.role !== 'system'),
-      maxTokens: 1024,
+      maxTokens: 16384,
       temperature: 0.2
     }
 
-    console.log('Sending chat request with system prompt:', payload.system.substring(0, 100) + '...')
-    console.log('Using provider:', payload.provider, 'Model:', payload.model)
+    // For client MCP modes, enhance payload with tools
+    if (isClientMcpMode(provider.value)) {
+      try {
+        console.log('Client MCP mode detected - discovering tools...')
+        payload = await enhancePayloadWithTools(payload, provider.value)
+        console.log('Enhanced payload with tools:', payload.tools?.length || 0, 'tools available')
+      } catch (error) {
+        console.error('Error enhancing payload with tools:', error)
+        // Continue without tools if discovery fails
+      }
+    }
+
+    console.log('🚀 Sending chat request with system prompt:', payload.system.substring(0, 100) + '...')
+    console.log('📡 Using provider:', payload.provider, 'Model:', payload.model)
+    console.log('🔧 Provider mode:', payload.providerMode, 'Tools enabled:', !!payload.tools?.length)
+    console.log('🎯 Final payload summary:', {
+      provider: payload.provider,
+      providerMode: payload.providerMode,
+      toolCount: payload.tools?.length || 0,
+      messageCount: payload.messages?.length || 0
+    })
 
     // batch tiny deltas to the next animation frame
     let pending = ''
@@ -109,7 +130,7 @@ export function useChat() {
     }
 
     try {
-      stop.value = await openChatStream(
+      const closeFunction = await openChatStreamWithToolCalling(
         payload,
         (delta: string) => {
           pending += delta
@@ -136,6 +157,11 @@ export function useChat() {
           }
         }
       )
+
+      // Only set stop.value if it hasn't been cleared by onDone callback
+      if (stop.value !== null) {
+        stop.value = closeFunction
+      }
     } catch (e: any) {
       error.value = e?.message ?? String(e)
       cancel()

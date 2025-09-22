@@ -44,6 +44,7 @@ export function useToolCalling() {
   // Discover available MCP tools
   async function getMcpTools() {
     try {
+      console.info('Getting MCP tools')
       const client = await getClient()
       const toolList = await client.listTools()
       return toolList.tools || []

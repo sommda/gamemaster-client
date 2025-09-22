@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, watch } from 'vue'
 import ChatMessage from './ChatMessage.vue'
 import ChatComposer from './ChatComposer.vue'
 import type { ProviderMode } from '~/composables/useChat'
@@ -56,6 +56,18 @@ function viewPrompt() {
   emit('viewPrompt')
 }
 
+// Auto-scroll when messages change (for streaming)
+watch(
+  () => props.messages,
+  () => {
+    // Use nextTick to ensure DOM is updated
+    nextTick(() => {
+      scrollToBottom()
+    })
+  },
+  { deep: true }
+)
+
 // Expose scrollToBottom for parent component
 defineExpose({
   scrollToBottom
@@ -69,9 +81,9 @@ defineExpose({
         <label class="toolbar-item">
           Provider:
           <select :value="provider" @change="changeProvider(($event.target as HTMLSelectElement).value as ProviderMode)">
-            <option value="anthropic-server-mcp">Anthropic (Server MCP)</option>
             <option value="anthropic-client-mcp">Anthropic (Client MCP)</option>
             <option value="openai-client-mcp">OpenAI (Client MCP)</option>
+            <option value="anthropic-server-mcp">Anthropic (Server MCP)</option>
           </select>
         </label>
         <button class="btn" @click="newChat">New chat</button>

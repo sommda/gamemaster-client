@@ -1,5 +1,6 @@
 // server/api/chat/stream.get.ts
 import { defineEventHandler, getQuery } from 'h3'
+import { executeMcpTools, type ToolCall, type ToolResult } from '../../utils/mcpTools'
 
 const store: Map<string, any> = (globalThis as any).__CHAT_STORE__ ?? new Map()
 
@@ -44,7 +45,7 @@ export default defineEventHandler(async (event) => {
 
     if (isClientMcp) {
       // Route to client MCP handler
-      await handleClientMcpMode(body, baseProvider, system, chatMsgs, sendEvt, sendError, res)
+      await handleClientMcpMode(body, baseProvider, system, chatMsgs, sendEvt, sendError, res, event)
       return
     }
 
@@ -203,7 +204,8 @@ async function handleClientMcpMode(
   chatMsgs: any[],
   sendEvt: (name: string, obj: any) => void,
   sendError: (code: string, info: any) => void,
-  res: any
+  res: any,
+  event: any
 ) {
   const config = useRuntimeConfig()
 
@@ -228,19 +230,28 @@ async function handleClientMcpMode(
         // Note: NO 'anthropic-beta': 'mcp-client-2025-04-04' header for client MCP
       }
 
-      // TODO: Add tool definitions from MCP server
-      // For now, just send without tools to test basic routing
+      // For client MCP mode, tools are discovered client-side and passed in the request
       const payload = {
         model: body.model,
         messages: chatMsgs.map((m: any) => ({ role: m.role, content: m.content })),
         ...(system ? { system } : {}),
         stream: true,
         temperature: body.temperature ?? 0.7,
-        max_tokens: body.maxTokens ?? 1024
-        // tools: await getAnthropicToolDefinitions() // TODO: Phase 3
+        max_tokens: body.maxTokens ?? 1024,
+        // Include tools if provided by client
+        ...(body.tools && body.tools.length > 0 ? { tools: body.tools } : {})
       }
 
-      sendEvt('debug', { mode: 'client-mcp', provider: 'anthropic', toolsEnabled: false })
+      sendEvt('debug', { mode: 'client-mcp', provider: 'anthropic', toolsEnabled: !!(body.tools && body.tools.length > 0), toolCount: body.tools?.length || 0 })
+
+      // Log what we're sending to Anthropic
+      if (body.tools && body.tools.length > 0) {
+        console.log('🔧 Server: Forwarding tools to Anthropic, count:', body.tools.length)
+        console.log('🔍 First tool structure:', JSON.stringify(body.tools[0], null, 2))
+        console.log('📤 Full payload keys:', Object.keys(payload))
+      }
+
+      // For client MCP mode, use simple streaming - client handles tool calling
       await streamSimpleResponse(url, headers, payload, sendEvt, sendError, res, baseProvider)
 
     } else if (baseProvider === 'openai') {
@@ -258,20 +269,24 @@ async function handleClientMcpMode(
         'Idempotency-Key': idem
       }
 
+      // For client MCP mode, tools are discovered client-side and passed in the request
       const payload = {
         model: body.model,
         messages: chatMsgs.map((m: any) => ({ role: m.role, content: m.content })),
         stream: true,
         temperature: body.temperature ?? 0.7,
-        max_tokens: body.maxTokens ?? 1024
-        // tools: await getOpenAIToolDefinitions() // TODO: Phase 3
+        max_tokens: body.maxTokens ?? 1024,
+        // Include tools if provided by client
+        ...(body.tools && body.tools.length > 0 ? { tools: body.tools } : {})
       }
 
       if (system) {
         payload.messages.unshift({ role: 'system', content: system })
       }
 
-      sendEvt('debug', { mode: 'client-mcp', provider: 'openai', toolsEnabled: false })
+      sendEvt('debug', { mode: 'client-mcp', provider: 'openai', toolsEnabled: !!(body.tools && body.tools.length > 0), toolCount: body.tools?.length || 0 })
+
+      // For client MCP mode, use simple streaming - client handles tool calling
       await streamSimpleResponse(url, headers, payload, sendEvt, sendError, res, baseProvider)
 
     } else {
@@ -294,23 +309,37 @@ async function streamSimpleResponse(
   res: any,
   provider: string
 ) {
+  console.log('🚀 streamSimpleResponse: Making request to', provider)
+  console.log('🔍 Payload summary:', {
+    url,
+    hasTools: !!payload.tools?.length,
+    toolCount: payload.tools?.length || 0,
+    messageCount: payload.messages?.length || 0
+  })
+
   const send = (obj: any) => { res.write(`data: ${JSON.stringify(obj)}\n\n`); (res as any).flush?.() }
 
   let upstream: Response
   try {
+    console.log('📤 Making fetch request to LLM API...')
     upstream = await fetch(url, {
       method: 'POST',
       headers,
       body: JSON.stringify(payload)
     })
+    console.log('📥 Received response from LLM API:', upstream.status, upstream.statusText)
+  console.log('📋 Response headers:', Object.fromEntries(upstream.headers.entries()))
   } catch (e: any) {
+    console.error('❌ Fetch failed:', e)
     sendError('upstream_fetch_failed', { message: String(e?.message || e) })
     res.end()
     return
   }
 
   if (!upstream.ok) {
+    console.error('❌ LLM API returned error:', upstream.status, upstream.statusText)
     const text = (await upstream.text().catch(() => '')) || ''
+    console.error('❌ Error details:', text.slice(0, 1000))
     sendError('upstream_non_2xx', {
       status: upstream.status,
       statusText: upstream.statusText,
@@ -342,12 +371,51 @@ async function streamSimpleResponse(
 
       try {
         const evt = JSON.parse(data)
+        console.log('📥 Server: Received SSE event from Anthropic:', evt.type, evt)
 
         // Handle Anthropic format
         if (provider === 'anthropic' && evt?.type === 'content_block_delta' && evt?.delta?.type === 'text_delta') {
           const t = evt.delta.text || ''
+          console.log('📝 Server: Text delta:', t)
           if (t) send({ text: t })
           continue
+        }
+
+        // Handle Anthropic tool use events - forward to client for execution
+        if (provider === 'anthropic' && evt?.type === 'content_block_start' && evt?.content_block?.type === 'tool_use') {
+          console.log('🔧 Server: Tool use detected in Anthropic response!', evt.content_block)
+          // Forward tool use event to client for execution
+          sendEvt('anthropic-tool-use', {
+            type: 'tool_use_start',
+            tool_use: evt.content_block
+          })
+          continue
+        }
+
+        if (provider === 'anthropic' && evt?.type === 'content_block_delta' && evt?.delta?.type === 'input_json_delta') {
+          console.log('🔧 Server: Tool input delta:', evt.delta)
+          // Forward tool input delta to client
+          sendEvt('anthropic-tool-use', {
+            type: 'tool_input_delta',
+            delta: evt.delta
+          })
+          continue
+        }
+
+        // Check for tool use completion
+        if (provider === 'anthropic' && evt?.type === 'content_block_stop') {
+          console.log('🔧 Server: Content block stopped')
+          sendEvt('anthropic-tool-use', {
+            type: 'tool_use_complete'
+          })
+          continue
+        }
+
+        // Stream ended - send done
+        if (provider === 'anthropic' && evt?.type === 'message_stop') {
+          console.log('✅ Server: Message complete from Anthropic')
+          send({ done: true })
+          break
         }
 
         // Handle OpenAI format
@@ -366,6 +434,196 @@ async function streamSimpleResponse(
         // Ignore non-JSON frames
       }
     }
+  }
+
+  send({ done: true })
+  res.end()
+}
+
+// Stream response with tool calling orchestration
+async function streamWithToolCalling(
+  url: string,
+  headers: Record<string, string>,
+  initialPayload: any,
+  sendEvt: (name: string, obj: any) => void,
+  sendError: (code: string, info: any) => void,
+  res: any,
+  provider: string,
+  event: any
+) {
+  const send = (obj: any) => { res.write(`data: ${JSON.stringify(obj)}\n\n`); (res as any).flush?.() }
+
+  let conversationMessages = [...initialPayload.messages]
+  let maxIterations = 10 // Prevent infinite tool calling loops
+  let iterations = 0
+
+  while (iterations < maxIterations) {
+    iterations++
+
+    const payload = {
+      ...initialPayload,
+      messages: conversationMessages
+    }
+
+    sendEvt('debug', { iteration: iterations, messageCount: conversationMessages.length })
+
+    let upstream: Response
+    try {
+      upstream = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload)
+      })
+    } catch (e: any) {
+      sendError('upstream_fetch_failed', { message: String(e?.message || e) })
+      res.end()
+      return
+    }
+
+    if (!upstream.ok) {
+      const text = (await upstream.text().catch(() => '')) || ''
+      sendError('upstream_non_2xx', {
+        status: upstream.status,
+        statusText: upstream.statusText,
+        details: text.slice(0, 4000)
+      })
+      res.end()
+      return
+    }
+
+    // Parse the stream and collect assistant response + tool calls
+    let assistantContent = ''
+    let toolCalls: ToolCall[] = []
+    let finishReason = ''
+
+    const reader = upstream.body!.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+
+      for (;;) {
+        const i = buf.indexOf('\n\n')
+        if (i === -1) break
+        const frame = buf.slice(0, i)
+        buf = buf.slice(i + 2)
+        const dataLines = frame.split('\n').filter(l => l.startsWith('data:')).map(l => l.slice(5).trimStart())
+        if (!dataLines.length) continue
+        const data = dataLines.join('\n').trim()
+        if (!data || data === '[DONE]' || data === 'DONE') continue
+
+        try {
+          const evt = JSON.parse(data)
+
+          if (provider === 'anthropic') {
+            // Handle Anthropic streaming format
+            if (evt?.type === 'content_block_delta' && evt?.delta?.type === 'text_delta') {
+              const text = evt.delta.text || ''
+              if (text) {
+                assistantContent += text
+                send({ text })
+              }
+            } else if (evt?.type === 'content_block_start' && evt?.content_block?.type === 'tool_use') {
+              // Anthropic tool call start
+              const toolCall: ToolCall = {
+                id: evt.content_block.id,
+                type: 'function',
+                function: {
+                  name: evt.content_block.name,
+                  arguments: JSON.stringify(evt.content_block.input)
+                }
+              }
+              toolCalls.push(toolCall)
+            } else if (evt?.type === 'message_delta' && evt?.delta?.stop_reason) {
+              finishReason = evt.delta.stop_reason
+            }
+          } else if (provider === 'openai') {
+            // Handle OpenAI streaming format
+            if (evt?.choices?.[0]?.delta?.content) {
+              const text = evt.choices[0].delta.content
+              assistantContent += text
+              send({ text })
+            } else if (evt?.choices?.[0]?.delta?.tool_calls) {
+              // OpenAI tool calls (may be chunked)
+              for (const toolCallDelta of evt.choices[0].delta.tool_calls) {
+                if (toolCallDelta.function) {
+                  const toolCall: ToolCall = {
+                    id: toolCallDelta.id || `tool_${Date.now()}`,
+                    type: 'function',
+                    function: {
+                      name: toolCallDelta.function.name || '',
+                      arguments: toolCallDelta.function.arguments || ''
+                    }
+                  }
+                  toolCalls.push(toolCall)
+                }
+              }
+            } else if (evt?.choices?.[0]?.finish_reason) {
+              finishReason = evt.choices[0].finish_reason
+            }
+          }
+
+          // Error handling
+          if (evt?.type === 'error' && evt?.error?.message) {
+            sendError('provider_error', { provider, message: evt.error.message })
+            res.end()
+            return
+          }
+        } catch {
+          // Ignore non-JSON frames
+        }
+      }
+    }
+
+    // Add assistant message to conversation
+    const assistantMessage: any = {
+      role: 'assistant',
+      content: assistantContent
+    }
+
+    if (toolCalls.length > 0) {
+      assistantMessage.tool_calls = toolCalls
+    }
+
+    conversationMessages.push(assistantMessage)
+
+    // If we have tool calls, execute them
+    if (toolCalls.length > 0) {
+      sendEvt('tool-thinking', {
+        toolCalls: toolCalls.map(tc => ({ name: tc.function.name, id: tc.id })),
+        iteration: iterations
+      })
+
+      // Execute tools against MCP server
+      const toolResults = await executeMcpTools(toolCalls, event)
+
+      // Add tool results to conversation
+      for (const result of toolResults) {
+        conversationMessages.push({
+          role: 'tool',
+          tool_call_id: result.tool_call_id,
+          content: result.content
+        })
+      }
+
+      sendEvt('tool-results', {
+        results: toolResults.map((r: ToolResult) => ({ id: r.tool_call_id, success: !r.content.startsWith('Error') })),
+        iteration: iterations
+      })
+
+      // Continue the loop to get the final response
+      continue
+    }
+
+    // No tool calls - we're done
+    break
+  }
+
+  if (iterations >= maxIterations) {
+    sendError('max_iterations_reached', { iterations })
   }
 
   send({ done: true })
