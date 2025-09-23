@@ -1,7 +1,6 @@
 // server/api/chat/stream.get.ts
 import { defineEventHandler, getQuery } from 'h3'
 import { executeMcpTools, type ToolCall, type ToolResult } from '../../utils/mcpTools'
-import { logOpenAIEvent, logOpenAIPayload, clearOpenAILog } from '../../utils/fileLogger'
 
 const store: Map<string, any> = (globalThis as any).__CHAT_STORE__ ?? new Map()
 
@@ -55,9 +54,6 @@ export default defineEventHandler(async (event) => {
     const idem = crypto.randomUUID()
 
     if (baseProvider === 'openai') {
-      // Clear log file for each new OpenAI request
-      clearOpenAILog()
-
       const { apiKey, baseURL } = config.openai ?? {}
       if (!apiKey) { sendError('missing_key', { provider: 'openai' }); res.end(); return }
       url = `${(baseURL || 'https://api.openai.com/v1').replace(/\/+$/, '')}/responses`
@@ -258,9 +254,6 @@ async function handleClientMcpMode(
       await streamSimpleResponse(url, headers, payload, sendEvt, sendError, res, baseProvider)
 
     } else if (baseProvider === 'openai') {
-      // Clear log file for each new OpenAI request
-      clearOpenAILog()
-
       const { apiKey, baseURL } = config.openai ?? {}
       if (!apiKey) {
         sendError('missing_key', { provider: 'openai' })
@@ -324,7 +317,6 @@ async function streamSimpleResponse(
   let upstream: Response
   try {
     console.log('📤 Making fetch request to LLM API...')
-    logOpenAIPayload(payload, 'REQUEST_TO_OPENAI')
     upstream = await fetch(url, {
       method: 'POST',
       headers,
@@ -375,16 +367,8 @@ async function streamSimpleResponse(
       try {
         const evt = JSON.parse(data)
 
-        // Detailed logging for OpenAI to debug event types
-        if (provider === 'openai') {
-          // Log to file for easier review
-          logOpenAIEvent(evt, 'SSE_EVENT_RECEIVED')
-
-          // Keep minimal console logging
-          console.log(`🔍 OPENAI EVENT: ${evt.type} ${evt.call_id ? `[${evt.call_id}]` : ''}`)
-        } else {
-          console.log(`📥 Server: Received SSE event from ${provider}:`, evt.type, evt)
-        }
+        // Log events for debugging
+        console.log(`📥 Server: Received SSE event from ${provider}:`, evt.type)
 
         // Handle Anthropic format
         if (provider === 'anthropic' && evt?.type === 'content_block_delta' && evt?.delta?.type === 'text_delta') {
@@ -453,7 +437,6 @@ async function streamSimpleResponse(
             const delta = evt.delta
             const outputIndex = evt.output_index
 
-            console.log('📥 Server: Function call arguments delta for output_index:', outputIndex, 'delta:', delta)
 
             // Forward with output_index (client will map to call_id from response.completed)
             sendEvt('openai-tool-use', {
@@ -469,7 +452,6 @@ async function streamSimpleResponse(
             const outputIndex = evt.output_index
             const finalArguments = evt.arguments
 
-            console.log('✅ Server: Function call arguments complete for output_index:', outputIndex, 'args:', finalArguments)
 
             sendEvt('openai-tool-use', {
               type: 'function_call_arguments_done',
@@ -481,8 +463,6 @@ async function streamSimpleResponse(
 
           // Handle response completion with full function call details
           if (evt.type === 'response.completed') {
-            console.log('🎯 Server: Response completed with output array')
-
             // Forward the completed response with all function call details
             sendEvt('openai-tool-use', {
               type: 'response_completed',

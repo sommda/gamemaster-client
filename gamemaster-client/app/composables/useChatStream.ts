@@ -167,20 +167,15 @@ export function useChatStream() {
               const delta = eventData.delta
               const outputIndex = eventData.output_index
 
-              console.log('📥 OpenAI function call arguments delta for output_index:', outputIndex, 'delta:', delta)
-
               // Store delta by output_index for later processing
               if (!pendingDeltas[outputIndex]) {
                 pendingDeltas[outputIndex] = ''
               }
               pendingDeltas[outputIndex] += delta
-              console.log('🔧 Building OpenAI function call arguments for output_index', outputIndex, 'length:', pendingDeltas[outputIndex].length)
             }
             else if (eventData.type === 'function_call_arguments_done') {
               const outputIndex = eventData.output_index
               const finalArguments = eventData.arguments
-
-              console.log('✅ OpenAI function call arguments complete for output_index:', outputIndex, 'args:', finalArguments)
 
               // Store final arguments by output_index
               if (!finalArgumentsByIndex[outputIndex]) {
@@ -190,16 +185,12 @@ export function useChatStream() {
             else if (eventData.type === 'response_completed') {
               const outputArray = eventData.output
 
-              console.log('🎯 OpenAI response completed with output array:', outputArray)
-
               // Now we have the complete output array with call_ids - process all function calls
               outputArray.forEach((outputItem: any, index: number) => {
                 if (outputItem.type === 'function_call') {
                   const callId = outputItem.call_id
                   const functionName = outputItem.name
                   const finalArguments = outputItem.arguments
-
-                  console.log('🔧 Processing function call:', functionName, 'call_id:', callId, 'at index:', index)
 
                   // Create tool call with correct call_id
                   const targetToolCall = {
@@ -215,9 +206,7 @@ export function useChatStream() {
                   // Parse final arguments
                   try {
                     targetToolCall.input = JSON.parse(finalArguments)
-                    console.log('✅ Parsed final arguments for', functionName, ':', targetToolCall.input)
                   } catch (e) {
-                    console.log('⚠️ Failed to parse final arguments:', finalArguments)
                     targetToolCall.input = {}
                   }
 
@@ -409,7 +398,6 @@ export function useChatStream() {
             messages: newInput.filter(item => item.role && item.content)
           }
 
-          console.log('📤 COMPLETE OPENAI PAYLOAD:', JSON.stringify(currentPayload, null, 2))
         }
 
         console.log('🔄 Prepared next iteration with tool results')
@@ -504,7 +492,6 @@ export function useChatStream() {
 
       // Create function_call objects from the tool calls
       toolCalls.forEach(toolCall => {
-        console.log('🔧 Creating function_call object for:', toolCall.function.name, 'call_id:', toolCall.id)
         functionCallMessages.push({
           id: `fc_${toolCall.id.replace('call_', '')}`, // Convert call_id to fc_ format for id
           call_id: toolCall.id, // Use the actual call_id
@@ -516,7 +503,6 @@ export function useChatStream() {
 
       // Create function_call_output objects from the tool results
       toolResults.forEach(result => {
-        console.log('🔧 Creating function_call_output for call_id:', result.tool_call_id)
         if (!result.tool_call_id) {
           console.error('❌ Missing tool_call_id in result:', result)
           throw new Error(`Missing tool_call_id in tool result: ${JSON.stringify(result)}`)
@@ -654,8 +640,7 @@ export function useChatStream() {
     es.addEventListener('openai-tool-use', (ev) => {
       try {
         const eventData = JSON.parse((ev as MessageEvent).data)
-        console.log('🔧 Received openai-tool-use event:', eventData)
-        console.log('📥 CLIENT: OpenAI tool event type:', eventData.type)
+        console.log('🔧 Received openai-tool-use event:', eventData.type)
 
         // Forward tool use events to the callback if provided
         if (opts?.onToolUseEvent) {
