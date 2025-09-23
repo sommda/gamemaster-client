@@ -160,6 +160,23 @@ export function useChatStream() {
               }
             } else if (eventData.type === 'tool_use_complete') {
               console.log('✅ Anthropic tool use sequence complete')
+
+              // Mark all tool calls as complete so they can be processed
+              for (const [, toolCall] of activeToolCalls) {
+                toolCall.complete = true
+
+                // If we have accumulated JSON deltas, parse them now
+                if (toolCall.inputJson && !toolCall.inputComplete) {
+                  try {
+                    toolCall.input = JSON.parse(toolCall.inputJson)
+                    toolCall.inputComplete = true
+                    console.log('✅ Parsed accumulated tool input for', toolCall.id, ':', toolCall.input)
+                  } catch (e) {
+                    console.log('⚠️ Failed to parse accumulated JSON for', toolCall.id, '- using original input')
+                    toolCall.inputComplete = true
+                  }
+                }
+              }
             }
             // Handle OpenAI function call events (forwarded from server)
             else if (eventData.type === 'function_call_arguments_delta') {
