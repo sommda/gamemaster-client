@@ -26,15 +26,13 @@ export interface AnthropicTool {
 }
 
 export interface OpenAITool {
+  name: string
+  description: string
   type: 'function'
-  function: {
-    name: string
-    description: string
-    parameters: {
-      type: 'object'
-      properties: Record<string, any>
-      required?: string[]
-    }
+  parameters: {
+    type: 'object'
+    properties: Record<string, any>
+    required?: string[]
   }
 }
 
@@ -67,18 +65,16 @@ export function useToolCalling() {
     }
   }
 
-  // Convert MCP tool schema to OpenAI format
+  // Convert MCP tool schema to OpenAI responses API format
   function convertMcpToOpenAITool(mcpTool: any): OpenAITool {
     return {
+      name: mcpTool.name,
+      description: mcpTool.description || `MCP tool: ${mcpTool.name}`,
       type: 'function',
-      function: {
-        name: mcpTool.name,
-        description: mcpTool.description || `MCP tool: ${mcpTool.name}`,
-        parameters: {
-          type: 'object',
-          properties: mcpTool.inputSchema?.properties || {},
-          required: mcpTool.inputSchema?.required || []
-        }
+      parameters: {
+        type: 'object',
+        properties: mcpTool.inputSchema?.properties || {},
+        required: mcpTool.inputSchema?.required || []
       }
     }
   }

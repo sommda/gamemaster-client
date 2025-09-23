@@ -3,7 +3,7 @@ import { useClientToolCalling } from './useClientToolCalling'
 import { useToolCalling } from './useToolCalling'
 
 export function useChatStream() {
-  const { isClientMcpMode, parseToolCalls, executeToolCalls } = useClientToolCalling()
+  const { isClientMcpMode } = useClientToolCalling()
   const { executeMcpTools } = useToolCalling()
 
   type Err = any
@@ -77,6 +77,10 @@ export function useChatStream() {
       let hasToolCalls = false
       let streamComplete = false
 
+      // For OpenAI: accumulate deltas by output_index until response.completed
+      const pendingDeltas: Record<number, string> = {}
+      const finalArgumentsByIndex: Record<number, string> = {}
+
       const originalOnText = onText
       const iterationOnText = (text: string) => {
         fullAssistantResponse += text
@@ -101,10 +105,11 @@ export function useChatStream() {
           onToolUseEvent: (eventData: any) => {
             console.log('🔧 Processing tool use event:', eventData)
 
+            // Handle Anthropic tool use events
             if (eventData.type === 'tool_use_start') {
               hasToolCalls = true
               const toolUse = eventData.tool_use
-              console.log('🚀 Tool use started:', {
+              console.log('🚀 Anthropic tool use started:', {
                 id: toolUse.id,
                 name: toolUse.name,
                 hasInput: !!toolUse.input
@@ -125,12 +130,12 @@ export function useChatStream() {
               // Collect input deltas to build complete JSON
               const delta = eventData.delta
               if (delta.partial_json) {
-                console.log('📥 Tool input delta received:', delta.partial_json.length > 50 ?
+                console.log('📥 Anthropic tool input delta received:', delta.partial_json.length > 50 ?
                   delta.partial_json.substring(0, 50) + '...' : delta.partial_json)
 
                 // Find the most recently started tool call that's still incomplete
                 let targetToolCall = null
-                for (const [id, toolCall] of activeToolCalls) {
+                for (const [, toolCall] of activeToolCalls) {
                   if (!toolCall.complete && !toolCall.inputComplete) {
                     targetToolCall = toolCall
                     // Don't break - keep looking for the most recent one
@@ -154,8 +159,85 @@ export function useChatStream() {
                 }
               }
             } else if (eventData.type === 'tool_use_complete') {
-              console.log('✅ Tool use sequence complete')
+              console.log('✅ Anthropic tool use sequence complete')
             }
+            // Handle OpenAI function call events (forwarded from server)
+            else if (eventData.type === 'function_call_arguments_delta') {
+              hasToolCalls = true
+              const delta = eventData.delta
+              const outputIndex = eventData.output_index
+
+              console.log('📥 OpenAI function call arguments delta for output_index:', outputIndex, 'delta:', delta)
+
+              // Store delta by output_index for later processing
+              if (!pendingDeltas[outputIndex]) {
+                pendingDeltas[outputIndex] = ''
+              }
+              pendingDeltas[outputIndex] += delta
+              console.log('🔧 Building OpenAI function call arguments for output_index', outputIndex, 'length:', pendingDeltas[outputIndex].length)
+            }
+            else if (eventData.type === 'function_call_arguments_done') {
+              const outputIndex = eventData.output_index
+              const finalArguments = eventData.arguments
+
+              console.log('✅ OpenAI function call arguments complete for output_index:', outputIndex, 'args:', finalArguments)
+
+              // Store final arguments by output_index
+              if (!finalArgumentsByIndex[outputIndex]) {
+                finalArgumentsByIndex[outputIndex] = finalArguments
+              }
+            }
+            else if (eventData.type === 'response_completed') {
+              const outputArray = eventData.output
+
+              console.log('🎯 OpenAI response completed with output array:', outputArray)
+
+              // Now we have the complete output array with call_ids - process all function calls
+              outputArray.forEach((outputItem: any, index: number) => {
+                if (outputItem.type === 'function_call') {
+                  const callId = outputItem.call_id
+                  const functionName = outputItem.name
+                  const finalArguments = outputItem.arguments
+
+                  console.log('🔧 Processing function call:', functionName, 'call_id:', callId, 'at index:', index)
+
+                  // Create tool call with correct call_id
+                  const targetToolCall = {
+                    id: callId, // Use call_id for tool execution
+                    callId: callId,
+                    name: functionName,
+                    input: {},
+                    inputJson: pendingDeltas[index] || '',
+                    complete: true,
+                    inputComplete: true
+                  }
+
+                  // Parse final arguments
+                  try {
+                    targetToolCall.input = JSON.parse(finalArguments)
+                    console.log('✅ Parsed final arguments for', functionName, ':', targetToolCall.input)
+                  } catch (e) {
+                    console.log('⚠️ Failed to parse final arguments:', finalArguments)
+                    targetToolCall.input = {}
+                  }
+
+                  // Store by call_id for tool execution
+                  activeToolCalls.set(callId, targetToolCall)
+
+                  // Update UI
+                  originalOnText(`\n\n🔧 *Calling ${functionName}...*\n\n`)
+                }
+              })
+            }
+
+            // Debug: show current state of activeToolCalls after processing this event
+            console.log('🔍 Current activeToolCalls after event:', Array.from(activeToolCalls.entries()).map(([id, tc]) => ({
+              mapKey: id,
+              toolCallId: tc.id,
+              name: tc.name,
+              inputComplete: tc.inputComplete,
+              inputJsonLength: tc.inputJson?.length || 0
+            })))
           }
         }
 
@@ -184,9 +266,20 @@ export function useChatStream() {
       }
 
       // Process completed tool calls
+      console.log('🔍 Processing activeToolCalls:', Array.from(activeToolCalls.entries()).map(([id, toolCall]) => ({
+        id: id,
+        toolCallId: toolCall.id,
+        name: toolCall.name,
+        hasInputJson: !!toolCall.inputJson,
+        inputJsonLength: toolCall.inputJson?.length || 0,
+        inputComplete: toolCall.inputComplete
+      })))
+
       const completedToolCalls = []
       for (const [id, toolCall] of activeToolCalls) {
         toolCall.complete = true
+
+        console.log(`🔍 Processing tool call with map key: "${id}", toolCall.id: "${toolCall.id}", name: "${toolCall.name}"`)
 
         // Parse the final JSON input if we have deltas
         if (toolCall.inputJson) {
@@ -200,6 +293,16 @@ export function useChatStream() {
           }
         } else {
           console.log('⚠️ No inputJson deltas collected for tool', id, '- using initial input:', toolCall.input)
+        }
+
+        // Skip tool calls that don't have proper ID or name
+        if (!toolCall.id || !toolCall.name) {
+          console.error('❌ Skipping invalid tool call - missing ID or name:', {
+            id: toolCall.id,
+            name: toolCall.name,
+            mapKey: id
+          })
+          continue
         }
 
         const completeToolCall = {
@@ -239,8 +342,10 @@ export function useChatStream() {
 
         // Execute tools and prepare next iteration
         console.log(`⚙️ Executing ${newToolCalls.length} tool calls...`)
+        console.log('🔍 Tool calls being executed:', newToolCalls.map(tc => ({ id: tc.id, name: tc.function.name })))
         const toolResults = await executeMcpTools(newToolCalls)
         console.log('🎯 Tool execution results:', toolResults)
+        console.log('🔍 Tool result IDs:', toolResults.map(tr => ({ tool_call_id: tr.tool_call_id, hasId: !!tr.tool_call_id })))
 
         // Track failed tool calls
         toolResults.forEach((result, index) => {
@@ -261,13 +366,50 @@ export function useChatStream() {
         )
 
         // Update payload for next iteration
-        currentPayload = {
-          ...currentPayload,
-          messages: [
-            ...currentPayload.messages,
-            assistantMessage,
-            ...toolResultMessages
+        const baseProvider = currentPayload.provider || currentPayload.providerMode?.split('-')[0]
+
+        if (baseProvider === 'anthropic') {
+          // Anthropic uses messages array with role-based messages
+          currentPayload = {
+            ...currentPayload,
+            messages: [
+              ...currentPayload.messages,
+              assistantMessage,
+              ...toolResultMessages
+            ]
+          }
+        } else {
+          // OpenAI responses API uses input array with function_call_output objects
+          // Convert existing messages to input format if needed
+          const existingInput = currentPayload.input || currentPayload.messages?.map((m: any) => ({
+            role: m.role,
+            content: m.content
+          })) || []
+
+          console.log('🔍 Existing input length:', existingInput.length)
+          console.log('🔍 Tool result messages to add:', toolResultMessages.length)
+          console.log('🔍 Tool result messages:', JSON.stringify(toolResultMessages, null, 2))
+
+          // Add assistant response to input
+          const newInput = [
+            ...existingInput,
+            { role: 'assistant', content: fullAssistantResponse }
           ]
+
+          // Add function call outputs directly to input array
+          newInput.push(...toolResultMessages)
+
+          console.log('🔍 Final input array length:', newInput.length)
+          console.log('🔍 Last few items in input array:', JSON.stringify(newInput.slice(-5), null, 2))
+
+          currentPayload = {
+            ...currentPayload,
+            input: newInput,
+            // Keep messages field for validation, but server will use input for OpenAI
+            messages: newInput.filter(item => item.role && item.content)
+          }
+
+          console.log('📤 COMPLETE OPENAI PAYLOAD:', JSON.stringify(currentPayload, null, 2))
         }
 
         console.log('🔄 Prepared next iteration with tool results')
@@ -349,19 +491,46 @@ export function useChatStream() {
         content: toolResultContent
       }]
     } else {
-      // OpenAI format with tool_calls field
+      // OpenAI responses API format - different from chat completions!
+      // For responses API, we need to add function call outputs to the input array
       assistantMessage = {
         role: 'assistant',
-        content: fullResponse,
-        tool_calls: toolCalls
+        content: fullResponse
       }
 
-      // OpenAI format: role "tool" messages
-      toolResultMessages = toolResults.map(result => ({
-        role: 'tool',
-        tool_call_id: result.tool_call_id,
-        content: result.content
-      }))
+      // OpenAI responses API format: need both function_call and function_call_output objects
+      const functionCallMessages: any[] = []
+      const functionCallOutputMessages: any[] = []
+
+      // Create function_call objects from the tool calls
+      toolCalls.forEach(toolCall => {
+        console.log('🔧 Creating function_call object for:', toolCall.function.name, 'call_id:', toolCall.id)
+        functionCallMessages.push({
+          id: `fc_${toolCall.id.replace('call_', '')}`, // Convert call_id to fc_ format for id
+          call_id: toolCall.id, // Use the actual call_id
+          type: 'function_call',
+          name: toolCall.function.name,
+          arguments: toolCall.function.arguments
+        })
+      })
+
+      // Create function_call_output objects from the tool results
+      toolResults.forEach(result => {
+        console.log('🔧 Creating function_call_output for call_id:', result.tool_call_id)
+        if (!result.tool_call_id) {
+          console.error('❌ Missing tool_call_id in result:', result)
+          throw new Error(`Missing tool_call_id in tool result: ${JSON.stringify(result)}`)
+        }
+
+        functionCallOutputMessages.push({
+          type: 'function_call_output',
+          call_id: result.tool_call_id,
+          output: result.content
+        })
+      })
+
+      // Combine both function_call and function_call_output messages
+      toolResultMessages = [...functionCallMessages, ...functionCallOutputMessages]
     }
 
     console.log('🔧 Formatted assistant message for', baseProvider, ':', JSON.stringify(assistantMessage, null, 2))
@@ -479,6 +648,21 @@ export function useChatStream() {
         }
       } catch (e) {
         console.error('❌ Error parsing anthropic-tool-use event:', e)
+      }
+    })
+
+    es.addEventListener('openai-tool-use', (ev) => {
+      try {
+        const eventData = JSON.parse((ev as MessageEvent).data)
+        console.log('🔧 Received openai-tool-use event:', eventData)
+        console.log('📥 CLIENT: OpenAI tool event type:', eventData.type)
+
+        // Forward tool use events to the callback if provided
+        if (opts?.onToolUseEvent) {
+          opts.onToolUseEvent(eventData)
+        }
+      } catch (e) {
+        console.error('❌ Error parsing openai-tool-use event:', e)
       }
     })
 

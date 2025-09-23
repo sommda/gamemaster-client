@@ -1,6 +1,7 @@
 // server/api/chat/stream.get.ts
 import { defineEventHandler, getQuery } from 'h3'
 import { executeMcpTools, type ToolCall, type ToolResult } from '../../utils/mcpTools'
+import { logOpenAIEvent, logOpenAIPayload, clearOpenAILog } from '../../utils/fileLogger'
 
 const store: Map<string, any> = (globalThis as any).__CHAT_STORE__ ?? new Map()
 
@@ -54,6 +55,9 @@ export default defineEventHandler(async (event) => {
     const idem = crypto.randomUUID()
 
     if (baseProvider === 'openai') {
+      // Clear log file for each new OpenAI request
+      clearOpenAILog()
+
       const { apiKey, baseURL } = config.openai ?? {}
       if (!apiKey) { sendError('missing_key', { provider: 'openai' }); res.end(); return }
       url = `${(baseURL || 'https://api.openai.com/v1').replace(/\/+$/, '')}/responses`
@@ -64,10 +68,9 @@ export default defineEventHandler(async (event) => {
       }
       payload = {
         model: body.model,
-        input: chatMsgs.map((m: any) => ({ role: m.role, content: m.content })),
-        ...(system ? { system } : {}),
+        input: body.input || chatMsgs.map((m: any) => ({ role: m.role, content: m.content })),
+        ...(system ? { instructions: system } : {}),
         stream: true,
-        temperature: body.temperature ?? 0.7,
         max_output_tokens: body.maxTokens ?? 1024
       }
     } else if (baseProvider === 'anthropic') {
@@ -158,30 +161,30 @@ export default defineEventHandler(async (event) => {
           const evt = JSON.parse(data)
 
           // Anthropic tokens (works with/without MCP calls)
-          if (evt?.type === 'content_block_delta' && evt?.delta?.type === 'text_delta') {
+          if (baseProvider === 'anthropic' && evt?.type === 'content_block_delta' && evt?.delta?.type === 'text_delta') {
             const t = evt.delta.text || ''
             if (t) send({ text: t })
             continue
           }
-          if (evt?.type === 'error' && evt?.error?.message) {
+          if (baseProvider === 'anthropic' && evt?.type === 'error' && evt?.error?.message) {
             sendError('provider_error', { provider: body.provider, message: evt.error.message })
             continue
           }
 
-          // OpenAI tokens
-          if (evt?.type === 'response.output_text.delta' && typeof evt?.delta === 'string') {
+          // OpenAI Responses API tokens
+          if (baseProvider === 'openai' && evt?.type === 'response.output_text.delta' && typeof evt?.delta === 'string') {
             send({ text: evt.delta }); continue
           }
-          if (evt?.type === 'response.refusal.delta' && typeof evt?.delta === 'string') {
+          if (baseProvider === 'openai' && evt?.type === 'response.refusal.delta' && typeof evt?.delta === 'string') {
             send({ text: evt.delta }); continue
           }
-          if (evt?.type === 'response.error' && evt?.error?.message) {
+          if (baseProvider === 'openai' && evt?.type === 'response.error' && evt?.error?.message) {
             sendError('provider_error', { provider: body.provider, message: evt.error.message })
             continue
           }
 
           // (Optional) observe other frames in debug
-          if (debug) sendEvt('debug', { frameType: evt?.type })
+          if (debug) sendEvt('debug', { frameType: evt?.type, provider: baseProvider })
         } catch {
           if (debug) sendEvt('debug', { nonJsonFrame: (data || '').slice(0, 200) })
         }
@@ -255,6 +258,9 @@ async function handleClientMcpMode(
       await streamSimpleResponse(url, headers, payload, sendEvt, sendError, res, baseProvider)
 
     } else if (baseProvider === 'openai') {
+      // Clear log file for each new OpenAI request
+      clearOpenAILog()
+
       const { apiKey, baseURL } = config.openai ?? {}
       if (!apiKey) {
         sendError('missing_key', { provider: 'openai' })
@@ -262,7 +268,7 @@ async function handleClientMcpMode(
         return
       }
 
-      url = `${(baseURL || 'https://api.openai.com/v1').replace(/\/+$/, '')}/chat/completions`
+      url = `${(baseURL || 'https://api.openai.com/v1').replace(/\/+$/, '')}/responses`
       headers = {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
@@ -272,16 +278,12 @@ async function handleClientMcpMode(
       // For client MCP mode, tools are discovered client-side and passed in the request
       const payload = {
         model: body.model,
-        messages: chatMsgs.map((m: any) => ({ role: m.role, content: m.content })),
+        input: body.input || chatMsgs.map((m: any) => ({ role: m.role, content: m.content })),
+        ...(system ? { instructions: system } : {}),
         stream: true,
-        temperature: body.temperature ?? 0.7,
-        max_tokens: body.maxTokens ?? 1024,
+        max_output_tokens: body.maxTokens ?? 1024,
         // Include tools if provided by client
         ...(body.tools && body.tools.length > 0 ? { tools: body.tools } : {})
-      }
-
-      if (system) {
-        payload.messages.unshift({ role: 'system', content: system })
       }
 
       sendEvt('debug', { mode: 'client-mcp', provider: 'openai', toolsEnabled: !!(body.tools && body.tools.length > 0), toolCount: body.tools?.length || 0 })
@@ -299,7 +301,7 @@ async function handleClientMcpMode(
   }
 }
 
-// Stream a simple response without tool calling (for Phase 2)
+// Stream a simple response without tool calling
 async function streamSimpleResponse(
   url: string,
   headers: Record<string, string>,
@@ -322,6 +324,7 @@ async function streamSimpleResponse(
   let upstream: Response
   try {
     console.log('📤 Making fetch request to LLM API...')
+    logOpenAIPayload(payload, 'REQUEST_TO_OPENAI')
     upstream = await fetch(url, {
       method: 'POST',
       headers,
@@ -371,12 +374,22 @@ async function streamSimpleResponse(
 
       try {
         const evt = JSON.parse(data)
-        console.log('📥 Server: Received SSE event from Anthropic:', evt.type, evt)
+
+        // Detailed logging for OpenAI to debug event types
+        if (provider === 'openai') {
+          // Log to file for easier review
+          logOpenAIEvent(evt, 'SSE_EVENT_RECEIVED')
+
+          // Keep minimal console logging
+          console.log(`🔍 OPENAI EVENT: ${evt.type} ${evt.call_id ? `[${evt.call_id}]` : ''}`)
+        } else {
+          console.log(`📥 Server: Received SSE event from ${provider}:`, evt.type, evt)
+        }
 
         // Handle Anthropic format
         if (provider === 'anthropic' && evt?.type === 'content_block_delta' && evt?.delta?.type === 'text_delta') {
           const t = evt.delta.text || ''
-          console.log('📝 Server: Text delta:', t)
+          console.log('📝 Server: Anthropic text delta:', t)
           if (t) send({ text: t })
           continue
         }
@@ -393,7 +406,7 @@ async function streamSimpleResponse(
         }
 
         if (provider === 'anthropic' && evt?.type === 'content_block_delta' && evt?.delta?.type === 'input_json_delta') {
-          console.log('🔧 Server: Tool input delta:', evt.delta)
+          console.log('🔧 Server: Anthropic tool input delta:', evt.delta)
           // Forward tool input delta to client
           sendEvt('anthropic-tool-use', {
             type: 'tool_input_delta',
@@ -404,7 +417,7 @@ async function streamSimpleResponse(
 
         // Check for tool use completion
         if (provider === 'anthropic' && evt?.type === 'content_block_stop') {
-          console.log('🔧 Server: Content block stopped')
+          console.log('🔧 Server: Anthropic content block stopped')
           sendEvt('anthropic-tool-use', {
             type: 'tool_use_complete'
           })
@@ -418,15 +431,86 @@ async function streamSimpleResponse(
           break
         }
 
-        // Handle OpenAI format
-        if (provider === 'openai' && evt?.choices?.[0]?.delta?.content) {
-          const t = evt.choices[0].delta.content
+        // Handle OpenAI Responses API format
+        if (provider === 'openai' && evt?.type === 'response.output_text.delta' && typeof evt?.delta === 'string') {
+          const t = evt.delta
+          console.log('📝 Server: OpenAI text delta:', t)
           if (t) send({ text: t })
           continue
         }
 
-        // Error handling
+        if (provider === 'openai' && evt?.type === 'response.refusal.delta' && typeof evt?.delta === 'string') {
+          const t = evt.delta
+          console.log('📝 Server: OpenAI refusal delta:', t)
+          if (t) send({ text: t })
+          continue
+        }
+
+        // Handle OpenAI function call events - use output_index mapping
+        if (provider === 'openai') {
+          // Handle function call arguments delta using output_index
+          if (evt.type === 'response.function_call_arguments.delta') {
+            const delta = evt.delta
+            const outputIndex = evt.output_index
+
+            console.log('📥 Server: Function call arguments delta for output_index:', outputIndex, 'delta:', delta)
+
+            // Forward with output_index (client will map to call_id from response.completed)
+            sendEvt('openai-tool-use', {
+              type: 'function_call_arguments_delta',
+              delta: delta,
+              output_index: outputIndex
+            })
+            continue
+          }
+
+          // Handle function call arguments done
+          if (evt.type === 'response.function_call_arguments.done') {
+            const outputIndex = evt.output_index
+            const finalArguments = evt.arguments
+
+            console.log('✅ Server: Function call arguments complete for output_index:', outputIndex, 'args:', finalArguments)
+
+            sendEvt('openai-tool-use', {
+              type: 'function_call_arguments_done',
+              output_index: outputIndex,
+              arguments: finalArguments
+            })
+            continue
+          }
+
+          // Handle response completion with full function call details
+          if (evt.type === 'response.completed') {
+            console.log('🎯 Server: Response completed with output array')
+
+            // Forward the completed response with all function call details
+            sendEvt('openai-tool-use', {
+              type: 'response_completed',
+              output: evt.response?.output || []
+            })
+            continue
+          }
+        }
+
+        // Handle OpenAI response lifecycle events
+        if (provider === 'openai' && evt?.type === 'response.created') {
+          console.log('🚀 Server: OpenAI response created:', evt)
+          continue
+        }
+
+        if (provider === 'openai' && evt?.type === 'response.completed') {
+          console.log('✅ Server: OpenAI response completed:', evt)
+          send({ done: true })
+          break
+        }
+
+        // Error handling for both providers
         if (evt?.type === 'error' && evt?.error?.message) {
+          sendError('provider_error', { provider, message: evt.error.message })
+          continue
+        }
+
+        if (provider === 'openai' && evt?.type === 'response.error' && evt?.error?.message) {
           sendError('provider_error', { provider, message: evt.error.message })
           continue
         }

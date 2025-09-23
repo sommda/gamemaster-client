@@ -42,9 +42,8 @@ export default defineEventHandler(async (event) => {
       model: body.model,
       input: chatMsgs.map(m => ({ role: m.role, content: m.content })),
       stream: true,
-      temperature: body.temperature ?? 0.7,
       max_output_tokens: body.maxTokens ?? 1024,
-      ...(system ? { system } : {})
+      ...(system ? { instructions: system } : {})
     }
   } else {
     const { apiKey, baseURL, version } = config.anthropic ?? {}
