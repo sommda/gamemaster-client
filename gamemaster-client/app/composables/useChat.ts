@@ -129,10 +129,16 @@ export function useChat() {
       raf = 0
     }
 
+    // Track actual response content separate from tool display
+    let actualContent = ''
+
     try {
       const closeFunction = await openChatStreamWithToolCalling(
         payload,
         (delta: string) => {
+          // Track actual content for recording
+          actualContent += delta
+          // Show to user immediately
           pending += delta
           if (!raf) raf = requestAnimationFrame(flush)
         },
@@ -141,13 +147,20 @@ export function useChat() {
         },
         {
           debug: false,
+          // Handle tool display messages separately - show to user but don't record
+          onToolDisplay: (message: string) => {
+            // Show tool message to user immediately
+            pending += `\n\n${message}\n\n`
+            if (!raf) raf = requestAnimationFrame(flush)
+          },
           // ✅ When the stream ends, record interaction and refresh chat history
           onDone: async () => {
             stop.value = null
             try {
+              // Record only the actual LLM content, not tool display messages
               await recordInteraction({
                 player_entry: userMsg.content,
-                game_response: assistant.content,
+                game_response: actualContent.trim(),
               })
               await loadTranscriptToMessages()
               if (onDone) await onDone()

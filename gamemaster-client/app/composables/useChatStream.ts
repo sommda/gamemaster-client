@@ -7,7 +7,7 @@ export function useChatStream() {
   const { executeMcpTools } = useToolCalling()
 
   type Err = any
-  type Opts = { debug?: boolean; onDone?: () => void; onToolUseEvent?: (eventData: any) => void }
+  type Opts = { debug?: boolean; onDone?: () => void; onToolUseEvent?: (eventData: any) => void; onToolDisplay?: (message: string) => void }
 
   async function openChatStreamWithToolCalling(
     payload: any,
@@ -115,8 +115,10 @@ export function useChatStream() {
                 hasInput: !!toolUse.input
               })
 
-              // Show tool call to user
-              originalOnText(`\n\n🔧 *Calling ${toolUse.name}...*\n\n`)
+              // Show tool call to user (separate from response content)
+              if (opts?.onToolDisplay) {
+                opts.onToolDisplay(`🔧 Calling ${toolUse.name}...`)
+              }
 
               activeToolCalls.set(toolUse.id, {
                 id: toolUse.id,
@@ -230,8 +232,10 @@ export function useChatStream() {
                   // Store by call_id for tool execution
                   activeToolCalls.set(callId, targetToolCall)
 
-                  // Update UI
-                  originalOnText(`\n\n🔧 *Calling ${functionName}...*\n\n`)
+                  // Show tool call to user (separate from response content)
+                  if (opts?.onToolDisplay) {
+                    opts.onToolDisplay(`🔧 Calling ${functionName}...`)
+                  }
                 }
               })
             }
