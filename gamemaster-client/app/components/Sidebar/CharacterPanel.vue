@@ -30,12 +30,26 @@ const emit = defineEmits<{
   returnToSummary: []
 }>()
 
+// Reactive state for collapsible sections (default collapsed)
+const collapsedSections = ref({
+  basicInfo: true,
+  combatStats: true,
+  abilities: true,
+  equipment: true,
+  spells: true,
+  description: true
+})
+
 function selectCharacter(character: Character) {
   emit('selectCharacter', character)
 }
 
 function returnToCharacterSummary() {
   emit('returnToSummary')
+}
+
+function toggleSection(section: keyof typeof collapsedSections.value) {
+  collapsedSections.value[section] = !collapsedSections.value[section]
 }
 </script>
 
@@ -80,93 +94,117 @@ function returnToCharacterSummary() {
       <div class="character-info-grid">
         <!-- Basic Info -->
         <div class="info-section">
-          <h5>Basic Info</h5>
-          <div v-if="selectedCharacter.character_class" class="info-item">
-            <strong>Class:</strong> {{ selectedCharacter.character_class.name }}
-            <span v-if="selectedCharacter.character_class.level"> (Level {{ selectedCharacter.character_class.level }})</span>
-            <span v-if="selectedCharacter.character_class.subclass"> - {{ selectedCharacter.character_class.subclass }}</span>
-          </div>
-          <div v-if="selectedCharacter.race" class="info-item">
-            <strong>Race:</strong> {{ selectedCharacter.race.name }}
-            <span v-if="selectedCharacter.race.subrace"> ({{ selectedCharacter.race.subrace }})</span>
-          </div>
-          <div v-if="selectedCharacter.background" class="info-item">
-            <strong>Background:</strong> {{ selectedCharacter.background }}
-          </div>
-          <div v-if="selectedCharacter.alignment" class="info-item">
-            <strong>Alignment:</strong> {{ selectedCharacter.alignment }}
+          <h5 class="section-header" @click="toggleSection('basicInfo')">
+            <span class="expand-icon" :class="{ expanded: !collapsedSections.basicInfo }">▶</span>
+            Basic Info
+          </h5>
+          <div v-show="!collapsedSections.basicInfo" class="section-content">
+            <div v-if="selectedCharacter.character_class" class="info-item">
+              <strong>Class:</strong> {{ selectedCharacter.character_class.name }}
+              <span v-if="selectedCharacter.character_class.level"> (Level {{ selectedCharacter.character_class.level }})</span>
+              <span v-if="selectedCharacter.character_class.subclass"> - {{ selectedCharacter.character_class.subclass }}</span>
+            </div>
+            <div v-if="selectedCharacter.race" class="info-item">
+              <strong>Race:</strong> {{ selectedCharacter.race.name }}
+              <span v-if="selectedCharacter.race.subrace"> ({{ selectedCharacter.race.subrace }})</span>
+            </div>
+            <div v-if="selectedCharacter.background" class="info-item">
+              <strong>Background:</strong> {{ selectedCharacter.background }}
+            </div>
+            <div v-if="selectedCharacter.alignment" class="info-item">
+              <strong>Alignment:</strong> {{ selectedCharacter.alignment }}
+            </div>
           </div>
         </div>
 
         <!-- Combat Stats -->
         <div class="info-section">
-          <h5>Combat Stats</h5>
-          <div class="info-item">
-            <strong>HP:</strong> {{ selectedCharacter.hit_points_current }} / {{ selectedCharacter.hit_points_max }}
-          </div>
-          <div v-if="selectedCharacter.armor_class" class="info-item">
-            <strong>AC:</strong> {{ selectedCharacter.armor_class }}
-          </div>
-          <div v-if="selectedCharacter.proficiency_bonus" class="info-item">
-            <strong>Proficiency Bonus:</strong> +{{ selectedCharacter.proficiency_bonus }}
+          <h5 class="section-header" @click="toggleSection('combatStats')">
+            <span class="expand-icon" :class="{ expanded: !collapsedSections.combatStats }">▶</span>
+            Combat Stats
+          </h5>
+          <div v-show="!collapsedSections.combatStats" class="section-content">
+            <div class="info-item">
+              <strong>HP:</strong> {{ selectedCharacter.hit_points_current }} / {{ selectedCharacter.hit_points_max }}
+            </div>
+            <div v-if="selectedCharacter.armor_class" class="info-item">
+              <strong>AC:</strong> {{ selectedCharacter.armor_class }}
+            </div>
+            <div v-if="selectedCharacter.proficiency_bonus" class="info-item">
+              <strong>Proficiency Bonus:</strong> +{{ selectedCharacter.proficiency_bonus }}
+            </div>
           </div>
         </div>
 
         <!-- Ability Scores -->
         <div v-if="selectedCharacter.abilities" class="info-section">
-          <h5>Ability Scores</h5>
-          <div class="abilities-grid">
-            <div v-for="(ability, name) in selectedCharacter.abilities" :key="name" class="ability-score">
-              <div class="ability-name">{{ String(name).charAt(0).toUpperCase() + String(name).slice(1) }}</div>
-              <div class="ability-value">{{ ability.score }} ({{ ability.mod >= 0 ? '+' : '' }}{{ ability.mod }})</div>
+          <h5 class="section-header" @click="toggleSection('abilities')">
+            <span class="expand-icon" :class="{ expanded: !collapsedSections.abilities }">▶</span>
+            Ability Scores
+          </h5>
+          <div v-show="!collapsedSections.abilities" class="section-content">
+            <div class="abilities-grid">
+              <div v-for="(ability, name) in selectedCharacter.abilities" :key="name" class="ability-score">
+                <div class="ability-name">{{ String(name).charAt(0).toUpperCase() + String(name).slice(1) }}</div>
+                <div class="ability-value">{{ ability.score }} ({{ ability.mod >= 0 ? '+' : '' }}{{ ability.mod }})</div>
+              </div>
             </div>
           </div>
         </div>
 
         <!-- Equipment -->
         <div v-if="selectedCharacter.equipment || selectedCharacter.inventory" class="info-section">
-          <h5>Equipment</h5>
-          <div v-if="selectedCharacter.equipment" class="equipment-section">
-            <div v-for="(item, slot) in selectedCharacter.equipment" :key="slot" class="info-item">
-              <strong>{{ String(slot).replace('_', ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()) }}:</strong>
-              {{ item ? item.name : 'None' }}
+          <h5 class="section-header" @click="toggleSection('equipment')">
+            <span class="expand-icon" :class="{ expanded: !collapsedSections.equipment }">▶</span>
+            Equipment
+          </h5>
+          <div v-show="!collapsedSections.equipment" class="section-content">
+            <div v-if="selectedCharacter.equipment" class="equipment-section">
+              <div v-for="(item, slot) in selectedCharacter.equipment" :key="slot" class="info-item">
+                <strong>{{ String(slot).replace('_', ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()) }}:</strong>
+                {{ item ? item.name : 'None' }}
+              </div>
             </div>
-          </div>
-          <div v-if="selectedCharacter.inventory && selectedCharacter.inventory.length > 0" class="inventory-section">
-            <strong>Inventory:</strong>
-            <ul class="inventory-list">
-              <li v-for="item in selectedCharacter.inventory.slice(0, 5)" :key="item.id">
-                {{ item.name }} <span v-if="item.quantity > 1">({{ item.quantity }})</span>
-              </li>
-              <li v-if="selectedCharacter.inventory.length > 5" class="more-items">
-                ...and {{ selectedCharacter.inventory.length - 5 }} more items
-              </li>
-            </ul>
+            <div v-if="selectedCharacter.inventory && selectedCharacter.inventory.length > 0" class="inventory-section">
+              <strong>Inventory:</strong>
+              <ul class="inventory-list">
+                <li v-for="item in selectedCharacter.inventory" :key="item.id">
+                  {{ item.name }} <span v-if="item.quantity > 1">({{ item.quantity }})</span>
+                </li>
+              </ul>
+            </div>
           </div>
         </div>
 
         <!-- Spells (if applicable) -->
         <div v-if="selectedCharacter.spells_known && selectedCharacter.spells_known.length > 0" class="info-section">
-          <h5>Spells</h5>
-          <div class="spells-list">
-            <div v-for="spell in selectedCharacter.spells_known.slice(0, 3)" :key="spell.id" class="spell-item">
-              <strong>{{ spell.name }}</strong> (Level {{ spell.level }})
-              <div class="spell-school">{{ spell.school }}</div>
-            </div>
-            <div v-if="selectedCharacter.spells_known.length > 3" class="more-items">
-              ...and {{ selectedCharacter.spells_known.length - 3 }} more spells
+          <h5 class="section-header" @click="toggleSection('spells')">
+            <span class="expand-icon" :class="{ expanded: !collapsedSections.spells }">▶</span>
+            Spells
+          </h5>
+          <div v-show="!collapsedSections.spells" class="section-content">
+            <div class="spells-list">
+              <div v-for="spell in selectedCharacter.spells_known" :key="spell.id" class="spell-item">
+                <strong>{{ spell.name }}</strong> (Level {{ spell.level }})
+                <div class="spell-school">{{ spell.school }}</div>
+              </div>
             </div>
           </div>
         </div>
 
         <!-- Description/Bio -->
         <div v-if="selectedCharacter.description || selectedCharacter.bio" class="info-section full-width">
-          <h5>Character Description</h5>
-          <div v-if="selectedCharacter.description" class="description">
-            <strong>Appearance:</strong> {{ selectedCharacter.description }}
-          </div>
-          <div v-if="selectedCharacter.bio" class="bio">
-            <strong>Background:</strong> {{ selectedCharacter.bio }}
+          <h5 class="section-header" @click="toggleSection('description')">
+            <span class="expand-icon" :class="{ expanded: !collapsedSections.description }">▶</span>
+            Character Description
+          </h5>
+          <div v-show="!collapsedSections.description" class="section-content">
+            <div v-if="selectedCharacter.description" class="description">
+              <strong>Appearance:</strong> {{ selectedCharacter.description }}
+            </div>
+            <div v-if="selectedCharacter.bio" class="bio">
+              <strong>Background:</strong> {{ selectedCharacter.bio }}
+            </div>
           </div>
         </div>
       </div>
@@ -283,6 +321,38 @@ function returnToCharacterSummary() {
   font-weight: 600;
   border-bottom: 1px solid #e5e7eb;
   padding-bottom: 4px;
+}
+
+.section-header {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: color 0.2s ease;
+  user-select: none;
+}
+
+.section-header:hover {
+  color: #1f2937;
+}
+
+.expand-icon {
+  font-size: 10px;
+  transition: transform 0.2s ease;
+  color: #6b7280;
+}
+
+.expand-icon.expanded {
+  transform: rotate(90deg);
+}
+
+.section-content {
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .info-item {

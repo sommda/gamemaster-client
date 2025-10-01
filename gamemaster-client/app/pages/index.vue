@@ -71,6 +71,7 @@ async function handleViewPrompt() {
       :selected-character="gameData.selectedCharacter.value"
       :character-view-mode="gameData.characterViewMode.value"
       :game-state="gameData.gameState.value"
+      :campaign="gameData.campaign.value"
       @select-character="gameData.selectCharacter"
       @return-to-character-summary="gameData.returnToCharacterSummary"
     />

@@ -35,20 +35,28 @@ export type GameState = {
   current_turn?: string | null
   initiative_order: CombatParticipant[]
   current_location?: string | null
+  current_date?: string | null
   party_level?: number
   party_funds?: string
   notes?: string
 }
 
+export type Campaign = {
+  name?: string
+  description?: string
+  current_date?: string
+  [key: string]: any
+}
+
 export function useGameData() {
-  const { getClient, fetchCurrentGameState } = useMcpClient()
+  const { getClient, fetchCurrentGameState, fetchCurrentCampaign } = useMcpClient()
 
   // --- character panel ---
   const characters = ref<Character[]>([])
   const selectedCharacter = ref<Character | null>(null)
   const characterViewMode = ref<'summary' | 'detail'>('summary')
 
-  // --- combat panel ---
+  // --- game state panel ---
   const gameState = ref<GameState>({
     in_combat: false,
     current_turn: null,
@@ -58,6 +66,9 @@ export function useGameData() {
     party_funds: '0 gp',
     notes: ''
   })
+
+  // --- campaign data ---
+  const campaign = ref<Campaign | null>(null)
 
   async function fetchCharacters(): Promise<void> {
     try {
@@ -114,6 +125,7 @@ export function useGameData() {
           current_turn: campaignGameState.current_turn || null,
           initiative_order: campaignGameState.initiative_order || [],
           current_location: campaignGameState.current_location || null,
+          current_date: campaignGameState.current_date || null,
           party_level: campaignGameState.party_level || 1,
           party_funds: campaignGameState.party_funds || '0 gp',
           notes: campaignGameState.notes || ''
@@ -121,6 +133,24 @@ export function useGameData() {
       }
     } catch (e: any) {
       console.error('Failed to fetch game state:', e)
+    }
+  }
+
+  async function fetchCampaign(): Promise<void> {
+    try {
+      const campaignName = await fetchCurrentCampaign()
+
+      if (campaignName && typeof campaignName === 'string') {
+        campaign.value = {
+          name: campaignName,
+          description: null,
+          current_date: null // Will come from gameState instead
+        }
+      } else {
+        campaign.value = null
+      }
+    } catch (e: any) {
+      console.error('Failed to fetch campaign:', e)
     }
   }
 
@@ -137,7 +167,8 @@ export function useGameData() {
   async function refreshGameData() {
     await Promise.all([
       fetchCharacters(),
-      fetchGameState()
+      fetchGameState(),
+      fetchCampaign()
     ])
   }
 
@@ -147,10 +178,12 @@ export function useGameData() {
     selectedCharacter,
     characterViewMode,
     gameState,
+    campaign,
 
     // Actions
     fetchCharacters,
     fetchGameState,
+    fetchCampaign,
     selectCharacter,
     returnToCharacterSummary,
     refreshGameData

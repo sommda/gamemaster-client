@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import CharacterPanel from './CharacterPanel.vue'
 import CombatPanel from './CombatPanel.vue'
+import GameStatePanel from './GameStatePanel.vue'
 
 type Character = {
   id: string
@@ -41,11 +42,19 @@ type GameState = {
   notes?: string
 }
 
+type Campaign = {
+  name?: string
+  description?: string
+  current_date?: string
+  [key: string]: any
+}
+
 const props = defineProps<{
   characters: Character[]
   selectedCharacter: Character | null
   characterViewMode: 'summary' | 'detail'
   gameState: GameState
+  campaign?: Campaign | null
 }>()
 
 const emit = defineEmits<{
@@ -64,6 +73,9 @@ function returnToCharacterSummary() {
 
 <template>
   <aside class="right">
+    <!-- Game State Panel (always shown) -->
+    <GameStatePanel :game-state="gameState" :campaign="campaign" />
+
     <!-- Combat Pane (shown when in combat) -->
     <CombatPanel v-if="gameState.in_combat" :game-state="gameState" />
 

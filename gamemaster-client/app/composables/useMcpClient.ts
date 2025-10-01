@@ -142,19 +142,20 @@ export function useMcpClient() {
       // SDK returns a ResourceContents envelope; normalize common shapes
       const contents = (r as any)?.contents ?? (r as any)?.content ?? r
 
-      let campaignData: any = null
+      // The current campaign resource returns just the campaign name as a string
+      let campaignName: string | null = null
 
       if (Array.isArray(contents) && contents[0]?.text) {
-        campaignData = JSON.parse(contents[0].text)
+        campaignName = String(contents[0].text).replace(/^"|"$/g, '') // Remove surrounding quotes
       } else if (typeof contents?.text === 'string') {
-        campaignData = JSON.parse(contents.text)
-      } else if (typeof contents === 'object') {
-        campaignData = contents
-      } else if (typeof r === 'object') {
-        campaignData = r
+        campaignName = contents.text.replace(/^"|"$/g, '') // Remove surrounding quotes
+      } else if (typeof contents === 'string') {
+        campaignName = contents.replace(/^"|"$/g, '') // Remove surrounding quotes
+      } else if (typeof r === 'string') {
+        campaignName = r.replace(/^"|"$/g, '') // Remove surrounding quotes
       }
 
-      return campaignData || {}
+      return campaignName || null
     })
   }
 
