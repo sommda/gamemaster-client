@@ -7,6 +7,7 @@ type GameState = {
   current_date?: string | null
   party_level?: number
   party_funds?: string
+  modes?: string[]
   notes?: string
 }
 
@@ -72,6 +73,16 @@ const campaignName = computed(() => {
         <div class="state-label">Current Turn</div>
         <div class="state-value current-turn">{{ gameState.current_turn }}</div>
       </div>
+
+      <!-- Modes -->
+      <div v-if="gameState.modes && gameState.modes.length > 0" class="state-item modes-item">
+        <div class="state-label">Modes</div>
+        <div class="state-value modes-list">
+          <span v-for="mode in gameState.modes" :key="mode" class="mode-tag">
+            {{ mode }}
+          </span>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -132,6 +143,29 @@ const campaignName = computed(() => {
 .state-value.current-turn {
   color: #059669;
   font-weight: 600;
+}
+
+.modes-item {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.modes-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  text-align: left;
+}
+
+.mode-tag {
+  background: #3b82f6;
+  color: white;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 6px;
+  border-radius: 12px;
+  text-transform: capitalize;
 }
 
 /* Responsive adjustments for narrow sidebars */

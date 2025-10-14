@@ -18,8 +18,8 @@ export function useChat() {
   // --- provider + models ---
   const provider = ref<ProviderMode>('anthropic-client-mcp')
   const modelByProvider: Record<ProviderMode, string> = {
-    'anthropic-server-mcp': 'claude-sonnet-4-20250514',
-    'anthropic-client-mcp': 'claude-sonnet-4-20250514',
+    'anthropic-server-mcp': 'claude-sonnet-4-5-20250929',
+    'anthropic-client-mcp': 'claude-sonnet-4-5-20250929',
     'openai-client-mcp': 'gpt-5'
   }
 

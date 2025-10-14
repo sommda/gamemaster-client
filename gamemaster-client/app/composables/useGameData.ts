@@ -38,6 +38,7 @@ export type GameState = {
   current_date?: string | null
   party_level?: number
   party_funds?: string
+  modes?: string[]
   notes?: string
 }
 
@@ -62,8 +63,10 @@ export function useGameData() {
     current_turn: null,
     initiative_order: [],
     current_location: null,
+    current_date: null,
     party_level: 1,
     party_funds: '0 gp',
+    modes: [],
     notes: ''
   })
 
@@ -128,6 +131,7 @@ export function useGameData() {
           current_date: campaignGameState.current_date || null,
           party_level: campaignGameState.party_level || 1,
           party_funds: campaignGameState.party_funds || '0 gp',
+          modes: campaignGameState.modes || [],
           notes: campaignGameState.notes || ''
         }
       }
