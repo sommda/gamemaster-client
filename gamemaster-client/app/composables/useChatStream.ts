@@ -2,12 +2,24 @@
 import { useClientToolCalling } from './useClientToolCalling'
 import { useToolCalling } from './useToolCalling'
 
+export type ToolCallInfo = {
+  tool_name: string
+  tool_id: string
+  tool_parameters: Record<string, any>
+  tool_result: string
+}
+
 export function useChatStream() {
   const { isClientMcpMode } = useClientToolCalling()
   const { executeMcpTools } = useToolCalling()
 
   type Err = any
-  type Opts = { debug?: boolean; onDone?: () => void; onToolUseEvent?: (eventData: any) => void; onToolDisplay?: (message: string) => void }
+  type Opts = {
+    debug?: boolean
+    onDone?: (gameResponses?: (string | ToolCallInfo[])[]) => void
+    onToolUseEvent?: (eventData: any) => void
+    onToolDisplay?: (message: string) => void
+  }
 
   async function openChatStreamWithToolCalling(
     payload: any,
@@ -44,6 +56,10 @@ export function useChatStream() {
     let shouldContinue = true
     let closeFunction: (() => void) | null = null
     const failedToolCalls = new Set<string>() // Track failed tool calls to prevent infinite loops
+
+    // Track responses in order: text strings and tool call arrays
+    const gameResponses: (string | ToolCallInfo[])[] = []
+    let currentTextBuffer = '' // Accumulate text between tool calls
 
     try {
       // Main tool calling loop
@@ -84,6 +100,7 @@ export function useChatStream() {
       const originalOnText = onText
       const iterationOnText = (text: string) => {
         fullAssistantResponse += text
+        currentTextBuffer += text // Accumulate for game_responses
         console.log('📝 Assistant text received:', text.length > 50 ? text.substring(0, 50) + '...' : text)
         // Always pass through assistant text to the user
         originalOnText(text)
@@ -161,6 +178,7 @@ export function useChatStream() {
                 }
               }
             } else if (eventData.type === 'tool_use_complete') {
+              hasToolCalls = true
               console.log('✅ Anthropic tool use sequence complete')
 
               // Mark all tool calls as complete so they can be processed
@@ -334,6 +352,12 @@ export function useChatStream() {
       }
 
       if (completedToolCalls.length > 0) {
+        // Flush any accumulated text before tool calls
+        if (currentTextBuffer.trim()) {
+          gameResponses.push(currentTextBuffer)
+          currentTextBuffer = ''
+        }
+
         // Check for previously failed tool calls to prevent infinite loops
         const newToolCalls = completedToolCalls.filter(toolCall => {
           const toolSignature = `${toolCall.function.name}:${toolCall.function.arguments}`
@@ -356,6 +380,18 @@ export function useChatStream() {
         const toolResults = await executeMcpTools(newToolCalls)
         console.log('🎯 Tool execution results:', toolResults)
         console.log('🔍 Tool result IDs:', toolResults.map(tr => ({ tool_call_id: tr.tool_call_id, hasId: !!tr.tool_call_id })))
+
+        // Collect tool calls with their results for recording
+        const toolCallsForRecording: ToolCallInfo[] = newToolCalls.map((toolCall, index) => {
+          const result = toolResults[index]
+          return {
+            tool_name: toolCall.function.name,
+            tool_id: toolCall.id,
+            tool_parameters: JSON.parse(toolCall.function.arguments),
+            tool_result: result?.content || 'Error: No result returned'
+          }
+        })
+        gameResponses.push(toolCallsForRecording)
 
         // Track failed tool calls
         toolResults.forEach((result, index) => {
@@ -434,14 +470,21 @@ export function useChatStream() {
     } catch (error) {
       console.error('❌ Error in tool calling orchestration:', error)
     } finally {
+      // Flush any remaining text
+      if (currentTextBuffer.trim()) {
+        gameResponses.push(currentTextBuffer)
+      }
+
       // Always ensure onDone is called, even if there were errors
       console.log('🏁 Tool calling orchestration complete')
       console.log('🔍 onDone callback exists:', !!opts?.onDone)
+      console.log('🔍 Total game responses collected:', gameResponses.length)
 
       try {
         if (opts?.onDone) {
-          console.log('▶️ Calling onDone callback...')
-          opts.onDone()
+          console.log('▶️ Calling onDone callback with game responses...')
+          // Pass gameResponses only if there are any, otherwise undefined
+          opts.onDone(gameResponses.length > 0 ? gameResponses : undefined)
           console.log('✅ onDone callback completed')
         }
       } catch (error) {

@@ -12,7 +12,7 @@ export type ProviderMode =
 
 export function useChat() {
   const { openChatStreamWithToolCalling } = useChatStream()
-  const { recordInteraction, fetchTranscriptAsMessages, fetchCurrentPrompt } = useMcpClient()
+  const { recordInteractionWithTools, fetchTranscriptAsMessages, fetchCurrentPrompt } = useMcpClient()
   const { enhancePayloadWithTools, isClientMcpMode } = useClientToolCalling()
 
   // --- provider + models ---
@@ -154,14 +154,23 @@ export function useChat() {
             if (!raf) raf = requestAnimationFrame(flush)
           },
           // ✅ When the stream ends, record interaction and refresh chat history
-          onDone: async () => {
+          onDone: async (gameResponses?: (string | any[])[]) => {
             stop.value = null
             try {
-              // Record only the actual LLM content, not tool display messages
-              await recordInteraction({
+              // Always use recordInteractionWithTools - it handles both tool calls and text-only responses
+              // If no gameResponses provided, create a simple text response array
+              const responses = gameResponses && gameResponses.length > 0
+                ? gameResponses
+                : [actualContent.trim()]
+
+              const recordPayload = {
                 player_entry: userMsg.content,
-                game_response: actualContent.trim(),
-              })
+                game_responses: responses,
+              }
+
+              console.log('📝 Recording interaction with', responses.length, 'response(s)')
+              console.log('📝 Full recordInteractionWithTools payload:', recordPayload)
+              await recordInteractionWithTools(recordPayload)
               await loadTranscriptToMessages()
               if (onDone) await onDone()
             } catch (e: any) {

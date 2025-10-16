@@ -9,6 +9,20 @@ type RecordInteractionArgs = {
   session_number?: number | null
 }
 
+type ToolCall = {
+  tool_name: string
+  tool_id: string
+  tool_parameters: Record<string, any>
+  tool_result: string
+}
+
+type RecordInteractionWithToolsArgs = {
+  player_entry: string
+  game_responses: (string | ToolCall[])[]
+  campaign_name?: string | null
+  session_number?: number | null
+}
+
 let client: Client | null = null
 let connecting: Promise<Client> | null = null
 
@@ -62,6 +76,20 @@ export function useMcpClient() {
         arguments: {
           player_entry: args.player_entry,
           game_response: args.game_response,
+          campaign_name: args.campaign_name ?? null,
+          session_number: args.session_number ?? null
+        }
+      })
+    })
+  }
+
+  async function recordInteractionWithTools(args: RecordInteractionWithToolsArgs): Promise<void> {
+    await withClient(async (c) => {
+      await c.callTool({
+        name: 'record_interaction_with_tools',
+        arguments: {
+          player_entry: args.player_entry,
+          game_responses: args.game_responses,
           campaign_name: args.campaign_name ?? null,
           session_number: args.session_number ?? null
         }
@@ -211,5 +239,5 @@ export function useMcpClient() {
     })
   }
 
-  return { getClient, recordInteraction, fetchCurrentTranscript, fetchTranscriptAsMessages, fetchCurrentCampaign, fetchCurrentGameState, fetchCurrentPrompt }
+  return { getClient, recordInteraction, recordInteractionWithTools, fetchCurrentTranscript, fetchTranscriptAsMessages, fetchCurrentCampaign, fetchCurrentGameState, fetchCurrentPrompt }
 }
