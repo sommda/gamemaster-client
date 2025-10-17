@@ -109,7 +109,7 @@ export function useMcpClient() {
     })
   }
 
-  type Msg = { role: 'system' | 'user' | 'assistant'; content: string }
+  type Msg = { role: 'system' | 'user' | 'assistant'; content: string | any[] }
 
   async function fetchTranscriptAsMessages(): Promise<Msg[]> {
     return withClient(async (c) => {
@@ -129,29 +129,136 @@ export function useMcpClient() {
         transcriptData = r
       }
 
-      // Handle both formats: entries array or direct entries
-      const entries = transcriptData?.entries || transcriptData || []
-
-      if (!Array.isArray(entries)) {
-        return []
-      }
-
       const messages: Msg[] = []
 
-      // Convert transcript entries to message format
-      for (const entry of entries) {
-        if (entry.player_entry) {
-          messages.push({
-            role: 'user',
-            content: entry.player_entry
-          })
-        }
+      // Helper function to recursively walk the transcript tree
+      function walkNode(node: any) {
+        if (!node) return
 
-        if (entry.game_response) {
-          messages.push({
-            role: 'assistant',
-            content: entry.game_response
-          })
+        // Process TranscriptInteraction nodes (leaf nodes)
+        if (node.node_type === 'interaction') {
+          // Add user message
+          if (node.user_text) {
+            messages.push({
+              role: 'user',
+              content: node.user_text
+            })
+          }
+
+          // Process responses - handle sequences of text and tools
+          if (Array.isArray(node.responses) && node.responses.length > 0) {
+            let currentAssistantContent: any[] = []
+
+            for (let i = 0; i < node.responses.length; i++) {
+              const response = node.responses[i]
+
+              if (response.type === 'text' && response.content) {
+                // Accumulate text content
+                currentAssistantContent.push({
+                  type: 'text',
+                  text: response.content
+                })
+              } else if (response.type === 'tools' && Array.isArray(response.calls) && response.calls.length > 0) {
+                // We hit a tool call - add tool_use blocks to current content
+                for (const call of response.calls) {
+                  currentAssistantContent.push({
+                    type: 'tool_use',
+                    id: call.id,
+                    name: call.name,
+                    input: call.input
+                  })
+                }
+
+                // Emit the assistant message with accumulated text + tool calls
+                if (currentAssistantContent.length > 0) {
+                  messages.push({
+                    role: 'assistant',
+                    content: currentAssistantContent
+                  })
+                }
+
+                // Immediately follow with user message containing tool results
+                const toolResults: any[] = []
+                for (const call of response.calls) {
+                  toolResults.push({
+                    type: 'tool_result',
+                    tool_use_id: call.id,
+                    content: call.response || ''
+                  })
+                }
+
+                if (toolResults.length > 0) {
+                  messages.push({
+                    role: 'user',
+                    content: toolResults
+                  })
+                }
+
+                // Reset for next sequence
+                currentAssistantContent = []
+              }
+            }
+
+            // If there's remaining text content with no tools, emit final assistant message
+            if (currentAssistantContent.length > 0) {
+              messages.push({
+                role: 'assistant',
+                content: currentAssistantContent
+              })
+            }
+          }
+        }
+        // Process TranscriptCombat nodes (interior nodes)
+        else if (node.node_type === 'combat') {
+          // Recursively walk combat actions
+          if (Array.isArray(node.actions)) {
+            for (const action of node.actions) {
+              walkNode(action)
+            }
+          }
+        }
+        // Process TranscriptAdventure nodes (interior nodes)
+        else if (node.node_type === 'adventure') {
+          // Recursively walk adventure actions
+          if (Array.isArray(node.actions)) {
+            for (const action of node.actions) {
+              walkNode(action)
+            }
+          }
+        }
+        // Process TranscriptTree root node
+        else if (node.node_type === 'transcript') {
+          // Recursively walk children
+          if (Array.isArray(node.children)) {
+            for (const child of node.children) {
+              walkNode(child)
+            }
+          }
+        }
+      }
+
+      // Check if we have a new format TranscriptTree
+      if (transcriptData?.node_type === 'transcript') {
+        // New hierarchical format
+        walkNode(transcriptData)
+      } else {
+        // Legacy flat format support
+        const entries = transcriptData?.entries || transcriptData || []
+        if (Array.isArray(entries)) {
+          for (const entry of entries) {
+            if (entry.player_entry) {
+              messages.push({
+                role: 'user',
+                content: entry.player_entry
+              })
+            }
+            if (entry.game_response) {
+              messages.push({
+                role: 'assistant',
+                content: entry.game_response
+              })
+            }
+          }
         }
       }
 

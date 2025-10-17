@@ -1,14 +1,59 @@
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { useChatStream } from './useChatStream'
 import { useMcpClient } from './useMcpClient'
 import { useClientToolCalling } from './useClientToolCalling'
 
-export type Msg = { role: 'system' | 'user' | 'assistant'; content: string }
+export type Msg = { role: 'system' | 'user' | 'assistant'; content: string | any[] }
+export type DisplayMsg = { role: 'system' | 'user' | 'assistant'; content: string }
 
 export type ProviderMode =
   | 'anthropic-server-mcp'    // Current: Anthropic handles MCP
   | 'anthropic-client-mcp'    // New: Client handles tools
   | 'openai-client-mcp'       // New: OpenAI with client tools
+
+// Helper function to convert messages to display-friendly format
+function convertToDisplayMessages(messages: Msg[]): DisplayMsg[] {
+  const displayMessages: DisplayMsg[] = []
+
+  for (const msg of messages) {
+    // System and user messages with string content pass through
+    if (typeof msg.content === 'string') {
+      displayMessages.push({ ...msg, content: msg.content })
+      continue
+    }
+
+    // Handle assistant messages with content arrays
+    if (Array.isArray(msg.content)) {
+      // Extract only text blocks, skip tool_use blocks
+      const textParts: string[] = []
+      for (const block of msg.content) {
+        if (block.type === 'text' && block.text) {
+          textParts.push(block.text)
+        }
+        // Skip tool_use blocks - don't display them
+      }
+
+      // Only add if there's text content
+      if (textParts.length > 0) {
+        displayMessages.push({
+          role: msg.role,
+          content: textParts.join('\n\n')
+        })
+      }
+    }
+
+    // Skip user messages with tool_result arrays entirely
+    if (msg.role === 'user' && Array.isArray(msg.content)) {
+      // Check if it's tool results
+      const isToolResults = msg.content.length > 0 && msg.content[0]?.type === 'tool_result'
+      if (isToolResults) {
+        continue // Skip this message entirely
+      }
+    }
+  }
+
+  return displayMessages
+}
 
 export function useChat() {
   const { openChatStreamWithToolCalling } = useChatStream()
@@ -28,6 +73,7 @@ export function useChat() {
 
   // --- conversation state ---
   const messages = ref<Msg[]>([{ role: 'system', content: currentPrompt.value }])
+  const displayMessages = computed(() => convertToDisplayMessages(messages.value))
   const error = ref<string | null>(null)
   const stop = ref<null | (() => void)>(null) // active stream closer
 
@@ -203,6 +249,7 @@ export function useChat() {
     provider,
     currentPrompt,
     messages,
+    displayMessages,
     error,
     stop,
 

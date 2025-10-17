@@ -49,7 +49,7 @@ async function handleViewPrompt() {
     <div class="left">
       <ChatInterface
         ref="chatInterface"
-        :messages="chat.messages.value"
+        :messages="chat.displayMessages.value"
         :provider="chat.provider.value"
         :error="chat.error.value"
         @send="handleSend"
