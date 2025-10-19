@@ -117,78 +117,8 @@ export default defineEventHandler(async (event) => {
 
     if (debug) sendEvt('debug', { url, headers: Object.keys(headers), model: body.model })
 
-    let upstream: Response
-    try {
-      upstream = await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload) })
-    } catch (e: any) {
-      sendError('upstream_fetch_failed', { message: String(e?.message || e) })
-      res.end(); return
-    }
-
-    if (!upstream.ok) {
-      const text = (await upstream.text().catch(() => '')) || ''
-      sendError('upstream_non_2xx', {
-        status: upstream.status,
-        statusText: upstream.statusText,
-        details: text.slice(0, 4000)
-      })
-      res.end(); return
-    }
-
-    // --- parse provider SSE, re-emit small {text:"..."} frames to client ---
-    const reader = upstream.body!.getReader()
-    const decoder = new TextDecoder()
-    let buf = ''
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buf += decoder.decode(value, { stream: true })
-
-      for (;;) {
-        const i = buf.indexOf('\n\n'); if (i === -1) break
-        const frame = buf.slice(0, i); buf = buf.slice(i + 2)
-        const dataLines = frame.split('\n').filter(l => l.startsWith('data:')).map(l => l.slice(5).trimStart())
-        if (!dataLines.length) continue
-        const data = dataLines.join('\n').trim()
-        if (!data || data === '[DONE]' || data === 'DONE') continue
-
-        try {
-          const evt = JSON.parse(data)
-
-          // Anthropic tokens (works with/without MCP calls)
-          if (baseProvider === 'anthropic' && evt?.type === 'content_block_delta' && evt?.delta?.type === 'text_delta') {
-            const t = evt.delta.text || ''
-            if (t) send({ text: t })
-            continue
-          }
-          if (baseProvider === 'anthropic' && evt?.type === 'error' && evt?.error?.message) {
-            sendError('provider_error', { provider: body.provider, message: evt.error.message })
-            continue
-          }
-
-          // OpenAI Responses API tokens
-          if (baseProvider === 'openai' && evt?.type === 'response.output_text.delta' && typeof evt?.delta === 'string') {
-            send({ text: evt.delta }); continue
-          }
-          if (baseProvider === 'openai' && evt?.type === 'response.refusal.delta' && typeof evt?.delta === 'string') {
-            send({ text: evt.delta }); continue
-          }
-          if (baseProvider === 'openai' && evt?.type === 'response.error' && evt?.error?.message) {
-            sendError('provider_error', { provider: body.provider, message: evt.error.message })
-            continue
-          }
-
-          // (Optional) observe other frames in debug
-          if (debug) sendEvt('debug', { frameType: evt?.type, provider: baseProvider })
-        } catch {
-          if (debug) sendEvt('debug', { nonJsonFrame: (data || '').slice(0, 200) })
-        }
-      }
-    }
-
-    send({ done: true })
-    res.end()
+    // Use the same retry logic for server-MCP mode
+    await streamWithRetry(url, headers, payload, send, sendEvt, sendError, res, baseProvider)
   } catch (e: any) {
     sendError('server_exception', { message: String(e?.message || e) })
     res.end()
@@ -294,6 +224,142 @@ async function handleClientMcpMode(
   }
 }
 
+// Retry configuration
+const MAX_RETRIES = 3
+const INITIAL_RETRY_DELAY_MS = 2000
+const MAX_RETRY_DELAY_MS = 30000
+
+// Helper to check if an error is retryable
+function isRetryableError(error: any): boolean {
+  // Overloaded errors from Anthropic
+  if (error?.error?.type === 'overloaded_error') return true
+  if (error?.error?.message?.toLowerCase().includes('overloaded')) return true
+
+  // Rate limit errors (529, 429)
+  if (error?.status === 529 || error?.status === 429) return true
+
+  return false
+}
+
+// Sleep helper
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+// Generic retry wrapper for streaming requests
+async function streamWithRetry(
+  url: string,
+  headers: Record<string, string>,
+  payload: any,
+  send: (obj: any) => void,
+  sendEvt: (name: string, obj: any) => void,
+  sendError: (code: string, info: any) => void,
+  res: any,
+  provider: string
+) {
+  let retryCount = 0
+  let lastError: any = null
+
+  while (retryCount <= MAX_RETRIES) {
+    if (retryCount > 0) {
+      const delay = Math.min(INITIAL_RETRY_DELAY_MS * Math.pow(2, retryCount - 1), MAX_RETRY_DELAY_MS)
+      const waitSeconds = Math.ceil(delay / 1000)
+      console.log(`🔄 Retry attempt ${retryCount}/${MAX_RETRIES} after ${waitSeconds}s delay...`)
+
+      // Notify user about retry
+      sendEvt('retry-status', {
+        attempt: retryCount,
+        maxRetries: MAX_RETRIES,
+        delaySeconds: waitSeconds,
+        reason: lastError?.message || 'Service overloaded'
+      })
+
+      await sleep(delay)
+    }
+
+    let upstream: Response
+    try {
+      console.log('📤 Making fetch request to LLM API...')
+      upstream = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload)
+      })
+      console.log('📥 Received response from LLM API:', upstream.status, upstream.statusText)
+    } catch (e: any) {
+      console.error('❌ Fetch failed:', e)
+      lastError = { message: String(e?.message || e) }
+
+      // Network errors are not retryable
+      sendError('upstream_fetch_failed', lastError)
+      res.end()
+      return
+    }
+
+    if (!upstream.ok) {
+      console.error('❌ LLM API returned error:', upstream.status, upstream.statusText)
+      const text = (await upstream.text().catch(() => '')) || ''
+      console.error('❌ Error details:', text.slice(0, 1000))
+
+      let errorData: any
+      try {
+        errorData = JSON.parse(text)
+      } catch {
+        errorData = { message: text }
+      }
+
+      lastError = {
+        status: upstream.status,
+        statusText: upstream.statusText,
+        details: text.slice(0, 4000),
+        error: errorData
+      }
+
+      // Check if error is retryable
+      if (isRetryableError({ status: upstream.status, error: errorData })) {
+        console.log('⚠️ Retryable error detected:', errorData?.error?.message || errorData?.message || 'Unknown error')
+        retryCount++
+        if (retryCount <= MAX_RETRIES) {
+          continue // Retry the request
+        }
+      }
+
+      // Non-retryable error or max retries exceeded
+      sendError('upstream_non_2xx', lastError)
+      res.end()
+      return
+    }
+
+    // Request succeeded - parse the stream
+    try {
+      await parseStreamResponse(upstream, send, sendEvt, sendError, provider, res)
+      // Success - send done and exit
+      send({ done: true })
+      res.end()
+      return
+    } catch (e: any) {
+      // Check if this is a retryable streaming error
+      if (e.message?.includes('Retryable error')) {
+        console.log('⚠️ Retryable streaming error caught:', e.message)
+        lastError = { message: e.message.replace('Retryable error: ', '') }
+        retryCount++
+        if (retryCount <= MAX_RETRIES) {
+          continue // Retry the entire request
+        }
+      }
+
+      // Non-retryable error or max retries exceeded
+      throw e
+    }
+  }
+
+  // Max retries exceeded
+  sendError('max_retries_exceeded', {
+    message: `Failed after ${MAX_RETRIES} retry attempts: ${lastError?.message || 'Unknown error'}`
+  })
+  res.end()
+}
+
 // Stream a simple response without tool calling
 async function streamSimpleResponse(
   url: string,
@@ -314,37 +380,19 @@ async function streamSimpleResponse(
 
   const send = (obj: any) => { res.write(`data: ${JSON.stringify(obj)}\n\n`); (res as any).flush?.() }
 
-  let upstream: Response
-  try {
-    console.log('📤 Making fetch request to LLM API...')
-    upstream = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(payload)
-    })
-    console.log('📥 Received response from LLM API:', upstream.status, upstream.statusText)
-  console.log('📋 Response headers:', Object.fromEntries(upstream.headers.entries()))
-  } catch (e: any) {
-    console.error('❌ Fetch failed:', e)
-    sendError('upstream_fetch_failed', { message: String(e?.message || e) })
-    res.end()
-    return
-  }
+  // Use the generic retry wrapper
+  await streamWithRetry(url, headers, payload, send, sendEvt, sendError, res, provider)
+}
 
-  if (!upstream.ok) {
-    console.error('❌ LLM API returned error:', upstream.status, upstream.statusText)
-    const text = (await upstream.text().catch(() => '')) || ''
-    console.error('❌ Error details:', text.slice(0, 1000))
-    sendError('upstream_non_2xx', {
-      status: upstream.status,
-      statusText: upstream.statusText,
-      details: text.slice(0, 4000)
-    })
-    res.end()
-    return
-  }
-
-  // Parse SSE stream
+// Parse the SSE stream response
+async function parseStreamResponse(
+  upstream: Response,
+  send: (obj: any) => void,
+  sendEvt: (name: string, obj: any) => void,
+  sendError: (code: string, info: any) => void,
+  provider: string,
+  res: any
+) {
   const reader = upstream.body!.getReader()
   const decoder = new TextDecoder()
   let buf = ''
@@ -485,23 +533,44 @@ async function streamSimpleResponse(
         }
 
         // Error handling for both providers
-        if (evt?.type === 'error' && evt?.error?.message) {
+        if (evt?.type === 'error' && evt?.error) {
+          console.error('❌ Provider error received:', evt.error)
+
+          // Check if this is a retryable error during streaming
+          if (isRetryableError({ error: evt.error })) {
+            console.log('⚠️ Retryable streaming error detected, closing stream to trigger retry')
+            // Close the reader and return to trigger outer retry logic
+            reader.cancel()
+            // This will be caught by the outer retry mechanism
+            throw new Error(`Retryable error: ${evt.error.message || 'Overloaded'}`)
+          }
+
           sendError('provider_error', { provider, message: evt.error.message })
           continue
         }
 
-        if (provider === 'openai' && evt?.type === 'response.error' && evt?.error?.message) {
+        if (provider === 'openai' && evt?.type === 'response.error' && evt?.error) {
+          console.error('❌ OpenAI error received:', evt.error)
+
+          // Check if this is a retryable error
+          if (isRetryableError({ error: evt.error })) {
+            console.log('⚠️ Retryable OpenAI error detected, closing stream to trigger retry')
+            reader.cancel()
+            throw new Error(`Retryable error: ${evt.error.message || 'Overloaded'}`)
+          }
+
           sendError('provider_error', { provider, message: evt.error.message })
           continue
         }
-      } catch {
+      } catch (parseError) {
+        // Re-throw retryable errors to trigger retry
+        if (parseError instanceof Error && parseError.message?.includes('Retryable error')) {
+          throw parseError
+        }
         // Ignore non-JSON frames
       }
     }
   }
-
-  send({ done: true })
-  res.end()
 }
 
 // Stream response with tool calling orchestration

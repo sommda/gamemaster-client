@@ -687,6 +687,19 @@ export function useChatStream() {
       console.log('🐛 Received debug event:', (ev as MessageEvent).data)
     })
 
+    es.addEventListener('retry-status', (ev) => {
+      try {
+        const retryData = JSON.parse((ev as MessageEvent).data)
+        console.log('🔄 Received retry-status event:', retryData)
+
+        // Show retry message to user
+        const message = `\n\n_⏳ Claude is currently experiencing high demand. Retrying in ${retryData.delaySeconds}s (attempt ${retryData.attempt}/${retryData.maxRetries})..._\n\n`
+        onText(message)
+      } catch (e) {
+        console.error('❌ Error parsing retry-status event:', e)
+      }
+    })
+
     es.addEventListener('anthropic-tool-use', (ev) => {
       try {
         const eventData = JSON.parse((ev as MessageEvent).data)
