@@ -23,6 +23,7 @@ export interface AnthropicTool {
     properties: Record<string, any>
     required?: string[]
   }
+  tags?: string[]
 }
 
 export interface OpenAITool {
@@ -34,6 +35,7 @@ export interface OpenAITool {
     properties: Record<string, any>
     required?: string[]
   }
+  tags?: string[]
 }
 
 export function useToolCalling() {
@@ -45,7 +47,15 @@ export function useToolCalling() {
       console.info('Getting MCP tools')
       const client = await getClient()
       const toolList = await client.listTools()
-      return toolList.tools || []
+      const tools = toolList.tools || []
+
+      // Debug: Log raw MCP tools to see if tags are present
+      console.log('🔍 Raw MCP tools from server:')
+      tools.forEach((tool: any) => {
+        console.log(`  - ${tool.name}:`, JSON.stringify(tool, null, 2))
+      })
+
+      return tools
     } catch (error) {
       console.error('Failed to fetch MCP tools:', error)
       return []
@@ -54,28 +64,39 @@ export function useToolCalling() {
 
   // Convert MCP tool schema to Anthropic format
   function convertMcpToAnthropicTool(mcpTool: any): AnthropicTool {
-    return {
+    // Extract tags from _meta._fastmcp.tags if present
+    const tags = mcpTool._meta?._fastmcp?.tags || mcpTool.tags
+    console.log(`🔄 Converting ${mcpTool.name}: tags =`, tags)
+
+    const converted = {
       name: mcpTool.name,
       description: mcpTool.description || `MCP tool: ${mcpTool.name}`,
       input_schema: {
-        type: 'object',
+        type: 'object' as const,
         properties: mcpTool.inputSchema?.properties || {},
         required: mcpTool.inputSchema?.required || []
-      }
+      },
+      tags
     }
+    console.log(`✅ Converted ${mcpTool.name}: converted.tags =`, converted.tags)
+    return converted
   }
 
   // Convert MCP tool schema to OpenAI responses API format
   function convertMcpToOpenAITool(mcpTool: any): OpenAITool {
+    // Extract tags from _meta._fastmcp.tags if present
+    const tags = mcpTool._meta?._fastmcp?.tags || mcpTool.tags
+
     return {
       name: mcpTool.name,
       description: mcpTool.description || `MCP tool: ${mcpTool.name}`,
       type: 'function',
       parameters: {
-        type: 'object',
+        type: 'object' as const,
         properties: mcpTool.inputSchema?.properties || {},
         required: mcpTool.inputSchema?.required || []
-      }
+      },
+      tags
     }
   }
 

@@ -94,6 +94,7 @@ export interface GameState {
   currentSession: number
   gameDate: string
   worldConditions: Record<string, any>
+  modes?: string[] // Active game modes (e.g., ["combat", "exploration", "social"])
 }
 
 export interface CombatEncounter {

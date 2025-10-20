@@ -1,5 +1,6 @@
 // composables/useClientToolCalling.ts - Client-side tool calling orchestration
 import { useToolCalling } from './useToolCalling'
+import { useMcpClient } from './useMcpClient'
 import type { ProviderMode } from './useChat'
 
 export function useClientToolCalling() {
@@ -8,10 +9,65 @@ export function useClientToolCalling() {
     getOpenAIToolDefinitions,
     executeMcpTools
   } = useToolCalling()
+  const { fetchCurrentGameState } = useMcpClient()
 
   // Check if a provider mode requires client-side tool calling
   function isClientMcpMode(providerMode: ProviderMode): boolean {
     return providerMode.endsWith('-client-mcp')
+  }
+
+  // Get current active modes from game state
+  async function getCurrentModes(): Promise<string[]> {
+    try {
+      const gameState = await fetchCurrentGameState()
+      return gameState?.modes || []
+    } catch (error) {
+      console.warn('Failed to fetch game modes, defaulting to empty:', error)
+      return []
+    }
+  }
+
+  // Filter tools based on active modes
+  // Tools are included if they have:
+  // - A tag matching "mode:any"
+  // - A tag matching "mode:X" where X is in the activeModes list
+  // - No mode tags at all (backwards compatible - includes all untagged tools)
+  function filterToolsByModes(tools: any[], activeModes: string[]): any[] {
+    // Log all tool tags for debugging
+    console.log('🏷️ Tool tags debugging:')
+    tools.forEach((tool: any) => {
+      console.log(`  - ${tool.name}: tags =`, tool.tags || 'undefined')
+    })
+    console.log('🎯 Active modes for filtering:', activeModes)
+
+    if (activeModes.length === 0) {
+      // No active modes - include all tools
+      return tools
+    }
+
+    return tools.filter(tool => {
+      const tags = tool.tags || []
+
+      // If no tags, exclude the tool
+      if (tags.length === 0) {
+        return false
+      }
+
+      // Check if tool has mode:any tag
+      if (tags.includes('mode:any')) {
+        return true
+      }
+
+      // Check if tool has any mode:X tag where X is in activeModes
+      for (const mode of activeModes) {
+        if (tags.includes(`mode:${mode}`)) {
+          return true
+        }
+      }
+
+      // Tool doesn't match any active modes
+      return false
+    })
   }
 
   // Get tools for a specific provider mode
@@ -47,23 +103,50 @@ export function useClientToolCalling() {
     }
 
     console.log('🔧 Enhancing payload with tools for client MCP mode')
-    const tools = await getToolsForProvider(providerMode)
 
-    if (tools.length === 0) {
+    // Get all available tools
+    const allTools = await getToolsForProvider(providerMode)
+
+    if (allTools.length === 0) {
       console.log('❌ No tools available, returning payload unchanged')
       return payload // No tools available
     }
 
-    console.log('✅ Enhanced payload with', tools.length, 'tools')
+    // Get current active modes and filter tools
+    const activeModes = await getCurrentModes()
+    console.log('🎮 Active game modes:', activeModes)
+
+    const filteredTools = filterToolsByModes(allTools, activeModes)
+    console.log(`🔍 Filtered tools: ${filteredTools.length}/${allTools.length} tools match active modes`)
+
+    if (filteredTools.length === 0) {
+      console.error('⚠️ WARNING: No tools match active modes! This should never happen. Check tool tags and mode configuration.')
+      console.error('Active modes:', activeModes)
+      console.error('Available tools:', allTools.map((t: any) => ({ name: t.name, tags: t.tags })))
+      // Return payload without tools - this is an error condition
+      return payload
+    }
+
+    console.log('✅ Enhanced payload with', filteredTools.length, 'filtered tools')
+
+    // Strip tags before sending to LLM (they don't accept custom fields)
+    const toolsWithoutTags = filteredTools.map((tool: any) => {
+      const { tags, ...toolWithoutTags } = tool
+      return toolWithoutTags
+    })
+
     const enhancedPayload = {
       ...payload,
-      tools
+      tools: toolsWithoutTags
     }
 
     // Log a sample of what we're sending
     console.log('📋 Enhanced payload summary:', {
       originalKeys: Object.keys(payload),
       enhancedKeys: Object.keys(enhancedPayload),
+      activeModes,
+      totalTools: allTools.length,
+      filteredTools: filteredTools.length,
       toolsSample: enhancedPayload.tools?.slice(0, 2)
     })
 

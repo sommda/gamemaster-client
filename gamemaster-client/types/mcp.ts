@@ -44,6 +44,7 @@ export interface GamemasterTool {
     properties: Record<string, any>
     required?: string[]
   }
+  tags?: string[] // Tags for filtering tools by mode (e.g., ["mode:combat", "mode:any"])
 }
 
 export interface ChatMessage {
