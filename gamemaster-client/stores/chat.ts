@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import type { ChatMessage } from '~/types/mcp'
+import { debug } from '../utils/debug'
 
 export const useChatStore = defineStore('chat', () => {
   const messages = ref<ChatMessage[]>([])
@@ -49,7 +50,7 @@ export const useChatStore = defineStore('chat', () => {
       currentStreamingMessage.value = null
       
     } catch (error) {
-      console.error('Error streaming chat:', error)
+      debug.error('Error streaming chat:', error)
       assistantMessage.content = 'Sorry, I encountered an error processing your message.'
       assistantMessage.isStreaming = false
       isStreaming.value = false

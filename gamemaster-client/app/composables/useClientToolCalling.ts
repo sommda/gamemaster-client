@@ -2,6 +2,7 @@
 import { useToolCalling } from './useToolCalling'
 import { useMcpClient } from './useMcpClient'
 import type { ProviderMode } from './useChat'
+import { debug } from '../utils/debug'
 
 export function useClientToolCalling() {
   const {
@@ -22,6 +23,7 @@ export function useClientToolCalling() {
       const gameState = await fetchCurrentGameState()
       return gameState?.modes || []
     } catch (error) {
+      // Keep as console.warn - this is a critical warning we always want visible
       console.warn('Failed to fetch game modes, defaulting to empty:', error)
       return []
     }
@@ -34,11 +36,11 @@ export function useClientToolCalling() {
   // - No mode tags at all (backwards compatible - includes all untagged tools)
   function filterToolsByModes(tools: any[], activeModes: string[]): any[] {
     // Log all tool tags for debugging
-    console.log('🏷️ Tool tags debugging:')
+    debug.log('🏷️ Tool tags debugging:')
     tools.forEach((tool: any) => {
-      console.log(`  - ${tool.name}: tags =`, tool.tags || 'undefined')
+      debug.log(`  - ${tool.name}: tags =`, tool.tags || 'undefined')
     })
-    console.log('🎯 Active modes for filtering:', activeModes)
+    debug.log('🎯 Active modes for filtering:', activeModes)
 
     if (activeModes.length === 0) {
       // No active modes - include all tools
@@ -78,17 +80,17 @@ export function useClientToolCalling() {
 
     const baseProvider = providerMode.split('-')[0]
 
-    console.log('🔧 Getting tools for provider:', baseProvider)
+    debug.log('🔧 Getting tools for provider:', baseProvider)
 
     if (baseProvider === 'anthropic') {
       const tools = await getAnthropicToolDefinitions()
-      console.log('🎯 Anthropic tools discovered:', tools.length)
-      console.log('🔍 First 3 tools:', tools.slice(0, 3))
+      debug.log('🎯 Anthropic tools discovered:', tools.length)
+      debug.log('🔍 First 3 tools:', tools.slice(0, 3))
       return tools
     } else if (baseProvider === 'openai') {
       const tools = await getOpenAIToolDefinitions()
-      console.log('🎯 OpenAI tools discovered:', tools.length)
-      console.log('🔍 First 3 tools:', tools.slice(0, 3))
+      debug.log('🎯 OpenAI tools discovered:', tools.length)
+      debug.log('🔍 First 3 tools:', tools.slice(0, 3))
       return tools
     }
 
@@ -98,28 +100,29 @@ export function useClientToolCalling() {
   // Enhance payload with tools for client MCP modes
   async function enhancePayloadWithTools(payload: any, providerMode: ProviderMode) {
     if (!isClientMcpMode(providerMode)) {
-      console.log('⚪ Not client MCP mode, returning payload unchanged')
+      debug.log('⚪ Not client MCP mode, returning payload unchanged')
       return payload // No changes for server MCP modes
     }
 
-    console.log('🔧 Enhancing payload with tools for client MCP mode')
+    debug.log('🔧 Enhancing payload with tools for client MCP mode')
 
     // Get all available tools
     const allTools = await getToolsForProvider(providerMode)
 
     if (allTools.length === 0) {
-      console.log('❌ No tools available, returning payload unchanged')
+      debug.log('❌ No tools available, returning payload unchanged')
       return payload // No tools available
     }
 
     // Get current active modes and filter tools
     const activeModes = await getCurrentModes()
-    console.log('🎮 Active game modes:', activeModes)
+    debug.log('🎮 Active game modes:', activeModes)
 
     const filteredTools = filterToolsByModes(allTools, activeModes)
-    console.log(`🔍 Filtered tools: ${filteredTools.length}/${allTools.length} tools match active modes`)
+    debug.log(`🔍 Filtered tools: ${filteredTools.length}/${allTools.length} tools match active modes`)
 
     if (filteredTools.length === 0) {
+      // Keep as console.error - this is a critical error we always want visible
       console.error('⚠️ WARNING: No tools match active modes! This should never happen. Check tool tags and mode configuration.')
       console.error('Active modes:', activeModes)
       console.error('Available tools:', allTools.map((t: any) => ({ name: t.name, tags: t.tags })))
@@ -127,7 +130,7 @@ export function useClientToolCalling() {
       return payload
     }
 
-    console.log('✅ Enhanced payload with', filteredTools.length, 'filtered tools')
+    debug.log('✅ Enhanced payload with', filteredTools.length, 'filtered tools')
 
     // Strip tags before sending to LLM (they don't accept custom fields)
     const toolsWithoutTags = filteredTools.map((tool: any) => {
@@ -141,7 +144,7 @@ export function useClientToolCalling() {
     }
 
     // Log a sample of what we're sending
-    console.log('📋 Enhanced payload summary:', {
+    debug.log('📋 Enhanced payload summary:', {
       originalKeys: Object.keys(payload),
       enhancedKeys: Object.keys(enhancedPayload),
       activeModes,
@@ -190,7 +193,7 @@ export function useClientToolCalling() {
               })
             }
           } catch (parseError) {
-            console.error('Error parsing tool call JSON:', parseError)
+            debug.error('Error parsing tool call JSON:', parseError)
           }
         }
       } else if (provider === 'openai') {
@@ -199,7 +202,7 @@ export function useClientToolCalling() {
         // TODO: Implement OpenAI streaming tool call parsing
       }
     } catch (error) {
-      console.error('Error parsing tool calls:', error)
+      debug.error('Error parsing tool calls:', error)
     }
 
     return toolCalls
@@ -213,7 +216,7 @@ export function useClientToolCalling() {
       const results = await executeMcpTools(toolCalls)
       return results
     } catch (error) {
-      console.error('Error executing tool calls:', error)
+      debug.error('Error executing tool calls:', error)
       return []
     }
   }
@@ -233,8 +236,8 @@ export function useClientToolCalling() {
 
       // TODO: Implement streaming with tool call detection and handling
       // For now, log that we're in client tool calling mode
-      console.log('Client MCP mode detected - tools will be handled client-side')
-      console.log('Available tools:', enhancedPayload.tools?.length || 0)
+      debug.log('Client MCP mode detected - tools will be handled client-side')
+      debug.log('Available tools:', enhancedPayload.tools?.length || 0)
 
       // For now, fall back to the original payload without tools
       // The proper implementation would:

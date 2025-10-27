@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { useMcpClient } from './useMcpClient'
+import { debug } from '../utils/debug'
 
 export type Character = {
   id: string
@@ -113,7 +114,7 @@ export function useGameData() {
         ...char // Include any other fields from the full Character model
       }))
     } catch (e: any) {
-      console.error('Failed to fetch characters:', e)
+      debug.error('Failed to fetch characters:', e)
       characters.value = []
     }
   }
@@ -136,7 +137,7 @@ export function useGameData() {
         }
       }
     } catch (e: any) {
-      console.error('Failed to fetch game state:', e)
+      debug.error('Failed to fetch game state:', e)
     }
   }
 
@@ -154,7 +155,7 @@ export function useGameData() {
         campaign.value = null
       }
     } catch (e: any) {
-      console.error('Failed to fetch campaign:', e)
+      debug.error('Failed to fetch campaign:', e)
     }
   }
 

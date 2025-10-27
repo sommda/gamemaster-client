@@ -1,5 +1,6 @@
 // server/utils/mcpTools.ts - Server-side MCP tool utilities
 import { getRequestURL } from 'h3'
+import { debug } from './debug'
 
 // Tool cache to avoid repeated calls
 const toolCache = new Map<string, any[]>()
@@ -50,11 +51,11 @@ async function getMcpTools(event?: any): Promise<any[]> {
   const expiry = cacheExpiry.get(cacheKey)
 
   if (cached && expiry && now < expiry) {
-    console.log('Returning cached MCP tools:', cached.length)
+    debug.log('Returning cached MCP tools:', cached.length)
     return cached
   }
 
-  console.log('Fetching MCP tools from server...')
+  debug.log('Fetching MCP tools from server...')
 
   try {
     // Use the same MCP proxy that handles sessions
@@ -75,7 +76,7 @@ async function getMcpTools(event?: any): Promise<any[]> {
     })
 
     if (!response.ok) {
-      console.warn('Failed to fetch MCP tools via proxy:', response.status, response.statusText)
+      debug.warn('Failed to fetch MCP tools via proxy:', response.status, response.statusText)
       return cached || [] // Return cached version if available
     }
 
@@ -86,10 +87,10 @@ async function getMcpTools(event?: any): Promise<any[]> {
     toolCache.set(cacheKey, tools)
     cacheExpiry.set(cacheKey, now + CACHE_TTL)
 
-    console.log('Fetched and cached MCP tools:', tools.length)
+    debug.log('Fetched and cached MCP tools:', tools.length)
     return tools
   } catch (error) {
-    console.warn('Error fetching MCP tools via proxy:', error)
+    debug.warn('Error fetching MCP tools via proxy:', error)
     return cached || [] // Return cached version if available
   }
 }
@@ -131,11 +132,11 @@ export async function getAnthropicToolDefinitions(event?: any): Promise<Anthropi
   const expiry = cacheExpiry.get(cacheKey)
 
   if (cached && expiry && now < expiry) {
-    console.log('Returning cached Anthropic tools:', cached.length)
+    debug.log('Returning cached Anthropic tools:', cached.length)
     return cached as AnthropicTool[]
   }
 
-  console.log('Converting MCP tools to Anthropic format...')
+  debug.log('Converting MCP tools to Anthropic format...')
   const mcpTools = await getMcpTools(event)
   const anthropicTools = mcpTools.map(convertMcpToAnthropicTool)
 
@@ -143,7 +144,7 @@ export async function getAnthropicToolDefinitions(event?: any): Promise<Anthropi
   toolCache.set(cacheKey, anthropicTools)
   cacheExpiry.set(cacheKey, now + CACHE_TTL)
 
-  console.log('Cached Anthropic tools:', anthropicTools.length)
+  debug.log('Cached Anthropic tools:', anthropicTools.length)
   return anthropicTools
 }
 
@@ -157,11 +158,11 @@ export async function getOpenAIToolDefinitions(event?: any): Promise<OpenAITool[
   const expiry = cacheExpiry.get(cacheKey)
 
   if (cached && expiry && now < expiry) {
-    console.log('Returning cached OpenAI tools:', cached.length)
+    debug.log('Returning cached OpenAI tools:', cached.length)
     return cached as OpenAITool[]
   }
 
-  console.log('Converting MCP tools to OpenAI format...')
+  debug.log('Converting MCP tools to OpenAI format...')
   const mcpTools = await getMcpTools(event)
   const openaiTools = mcpTools.map(convertMcpToOpenAITool)
 
@@ -169,13 +170,13 @@ export async function getOpenAIToolDefinitions(event?: any): Promise<OpenAITool[
   toolCache.set(cacheKey, openaiTools)
   cacheExpiry.set(cacheKey, now + CACHE_TTL)
 
-  console.log('Cached OpenAI tools:', openaiTools.length)
+  debug.log('Cached OpenAI tools:', openaiTools.length)
   return openaiTools
 }
 
 // Clear tool cache (useful for development or when MCP server changes)
 export function clearToolCache(): void {
-  console.log('Clearing tool cache')
+  debug.log('Clearing tool cache')
   toolCache.clear()
   cacheExpiry.clear()
 }

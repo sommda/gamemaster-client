@@ -2,6 +2,7 @@ import { ref, reactive, computed } from 'vue'
 import { useChatStream } from './useChatStream'
 import { useMcpClient } from './useMcpClient'
 import { useClientToolCalling } from './useClientToolCalling'
+import { debug } from '../utils/debug'
 
 export type Msg = { role: 'system' | 'user' | 'assistant'; content: string | any[] }
 export type DisplayMsg = { role: 'system' | 'user' | 'assistant'; content: string }
@@ -87,7 +88,7 @@ export function useChat() {
       // Replace messages with system message + transcript messages
       messages.value = [systemMessage, ...transcriptMessages]
     } catch (e: any) {
-      console.error('Failed to load transcript:', e)
+      debug.error('Failed to load transcript:', e)
     }
   }
 
@@ -108,7 +109,7 @@ export function useChat() {
     // Fetch current prompt from MCP server before each interaction
     try {
       const latestPrompt = await fetchCurrentPrompt()
-      console.log('Fetched prompt for chat request:', latestPrompt.substring(0, 100) + '...')
+      debug.log('Fetched prompt for chat request:', latestPrompt.substring(0, 100) + '...')
       currentPrompt.value = latestPrompt
 
       // Update system message in conversation
@@ -118,7 +119,7 @@ export function useChat() {
         messages.value.unshift({ role: 'system', content: latestPrompt })
       }
     } catch (e: any) {
-      console.error('Failed to fetch current prompt:', e)
+      debug.error('Failed to fetch current prompt:', e)
       // Continue with existing prompt if fetch fails
     }
 
@@ -146,19 +147,19 @@ export function useChat() {
     // For client MCP modes, enhance payload with tools
     if (isClientMcpMode(provider.value)) {
       try {
-        console.log('Client MCP mode detected - discovering tools...')
+        debug.log('Client MCP mode detected - discovering tools...')
         payload = await enhancePayloadWithTools(payload, provider.value)
-        console.log('Enhanced payload with tools:', payload.tools?.length || 0, 'tools available')
+        debug.log('Enhanced payload with tools:', payload.tools?.length || 0, 'tools available')
       } catch (error) {
-        console.error('Error enhancing payload with tools:', error)
+        debug.error('Error enhancing payload with tools:', error)
         // Continue without tools if discovery fails
       }
     }
 
-    console.log('🚀 Sending chat request with system prompt:', payload.system.substring(0, 100) + '...')
-    console.log('📡 Using provider:', payload.provider, 'Model:', payload.model)
-    console.log('🔧 Provider mode:', payload.providerMode, 'Tools enabled:', !!payload.tools?.length)
-    console.log('🎯 Final payload summary:', {
+    debug.log('🚀 Sending chat request with system prompt:', payload.system.substring(0, 100) + '...')
+    debug.log('📡 Using provider:', payload.provider, 'Model:', payload.model)
+    debug.log('🔧 Provider mode:', payload.providerMode, 'Tools enabled:', !!payload.tools?.length)
+    debug.log('🎯 Final payload summary:', {
       provider: payload.provider,
       providerMode: payload.providerMode,
       toolCount: payload.tools?.length || 0,
@@ -214,8 +215,8 @@ export function useChat() {
                 game_responses: responses,
               }
 
-              console.log('📝 Recording interaction with', responses.length, 'response(s)')
-              console.log('📝 Full recordInteractionWithTools payload:', recordPayload)
+              debug.log('📝 Recording interaction with', responses.length, 'response(s)')
+              debug.log('📝 Full recordInteractionWithTools payload:', recordPayload)
               await recordInteractionWithTools(recordPayload)
               await loadTranscriptToMessages()
               if (onDone) await onDone()

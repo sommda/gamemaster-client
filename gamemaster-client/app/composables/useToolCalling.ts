@@ -1,5 +1,6 @@
 // composables/useToolCalling.ts
 import { useMcpClient } from './useMcpClient'
+import { debug } from '../utils/debug'
 
 export interface ToolCall {
   id: string
@@ -50,14 +51,14 @@ export function useToolCalling() {
       const tools = toolList.tools || []
 
       // Debug: Log raw MCP tools to see if tags are present
-      console.log('🔍 Raw MCP tools from server:')
+      debug.log('🔍 Raw MCP tools from server:')
       tools.forEach((tool: any) => {
-        console.log(`  - ${tool.name}:`, JSON.stringify(tool, null, 2))
+        debug.log(`  - ${tool.name}:`, JSON.stringify(tool, null, 2))
       })
 
       return tools
     } catch (error) {
-      console.error('Failed to fetch MCP tools:', error)
+      debug.error('Failed to fetch MCP tools:', error)
       return []
     }
   }
@@ -66,7 +67,7 @@ export function useToolCalling() {
   function convertMcpToAnthropicTool(mcpTool: any): AnthropicTool {
     // Extract tags from _meta._fastmcp.tags if present
     const tags = mcpTool._meta?._fastmcp?.tags || mcpTool.tags
-    console.log(`🔄 Converting ${mcpTool.name}: tags =`, tags)
+    debug.log(`🔄 Converting ${mcpTool.name}: tags =`, tags)
 
     const converted = {
       name: mcpTool.name,
@@ -78,7 +79,7 @@ export function useToolCalling() {
       },
       tags
     }
-    console.log(`✅ Converted ${mcpTool.name}: converted.tags =`, converted.tags)
+    debug.log(`✅ Converted ${mcpTool.name}: converted.tags =`, converted.tags)
     return converted
   }
 

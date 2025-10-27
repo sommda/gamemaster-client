@@ -1,6 +1,7 @@
 // server/api/chat/stream.get.ts
 import { defineEventHandler, getQuery } from 'h3'
 import { executeMcpTools, type ToolCall, type ToolResult } from '../../utils/mcpTools'
+import { debug } from '../../utils/debug'
 
 const store: Map<string, any> = (globalThis as any).__CHAT_STORE__ ?? new Map()
 
@@ -175,9 +176,9 @@ async function handleClientMcpMode(
 
       // Log what we're sending to Anthropic
       if (body.tools && body.tools.length > 0) {
-        console.log('🔧 Server: Forwarding tools to Anthropic, count:', body.tools.length)
-        console.log('🔍 First tool structure:', JSON.stringify(body.tools[0], null, 2))
-        console.log('📤 Full payload keys:', Object.keys(payload))
+        debug.log('🔧 Server: Forwarding tools to Anthropic, count:', body.tools.length)
+        debug.log('🔍 First tool structure:', JSON.stringify(body.tools[0], null, 2))
+        debug.log('📤 Full payload keys:', Object.keys(payload))
       }
 
       // For client MCP mode, use simple streaming - client handles tool calling
@@ -264,7 +265,7 @@ async function streamWithRetry(
     if (retryCount > 0) {
       const delay = Math.min(INITIAL_RETRY_DELAY_MS * Math.pow(2, retryCount - 1), MAX_RETRY_DELAY_MS)
       const waitSeconds = Math.ceil(delay / 1000)
-      console.log(`🔄 Retry attempt ${retryCount}/${MAX_RETRIES} after ${waitSeconds}s delay...`)
+      debug.log(`🔄 Retry attempt ${retryCount}/${MAX_RETRIES} after ${waitSeconds}s delay...`)
 
       // Notify user about retry
       sendEvt('retry-status', {
@@ -279,15 +280,15 @@ async function streamWithRetry(
 
     let upstream: Response
     try {
-      console.log('📤 Making fetch request to LLM API...')
+      debug.log('📤 Making fetch request to LLM API...')
       upstream = await fetch(url, {
         method: 'POST',
         headers,
         body: JSON.stringify(payload)
       })
-      console.log('📥 Received response from LLM API:', upstream.status, upstream.statusText)
+      debug.log('📥 Received response from LLM API:', upstream.status, upstream.statusText)
     } catch (e: any) {
-      console.error('❌ Fetch failed:', e)
+      debug.error('❌ Fetch failed:', e)
       lastError = { message: String(e?.message || e) }
 
       // Network errors are not retryable
@@ -297,9 +298,9 @@ async function streamWithRetry(
     }
 
     if (!upstream.ok) {
-      console.error('❌ LLM API returned error:', upstream.status, upstream.statusText)
+      debug.error('❌ LLM API returned error:', upstream.status, upstream.statusText)
       const text = (await upstream.text().catch(() => '')) || ''
-      console.error('❌ Error details:', text.slice(0, 1000))
+      debug.error('❌ Error details:', text.slice(0, 1000))
 
       let errorData: any
       try {
@@ -317,7 +318,7 @@ async function streamWithRetry(
 
       // Check if error is retryable
       if (isRetryableError({ status: upstream.status, error: errorData })) {
-        console.log('⚠️ Retryable error detected:', errorData?.error?.message || errorData?.message || 'Unknown error')
+        debug.log('⚠️ Retryable error detected:', errorData?.error?.message || errorData?.message || 'Unknown error')
         retryCount++
         if (retryCount <= MAX_RETRIES) {
           continue // Retry the request
@@ -340,7 +341,7 @@ async function streamWithRetry(
     } catch (e: any) {
       // Check if this is a retryable streaming error
       if (e.message?.includes('Retryable error')) {
-        console.log('⚠️ Retryable streaming error caught:', e.message)
+        debug.log('⚠️ Retryable streaming error caught:', e.message)
         lastError = { message: e.message.replace('Retryable error: ', '') }
         retryCount++
         if (retryCount <= MAX_RETRIES) {
@@ -370,8 +371,8 @@ async function streamSimpleResponse(
   res: any,
   provider: string
 ) {
-  console.log('🚀 streamSimpleResponse: Making request to', provider)
-  console.log('🔍 Payload summary:', {
+  debug.log('🚀 streamSimpleResponse: Making request to', provider)
+  debug.log('🔍 Payload summary:', {
     url,
     hasTools: !!payload.tools?.length,
     toolCount: payload.tools?.length || 0,
@@ -416,19 +417,19 @@ async function parseStreamResponse(
         const evt = JSON.parse(data)
 
         // Log events for debugging
-        console.log(`📥 Server: Received SSE event from ${provider}:`, evt.type)
+        debug.log(`📥 Server: Received SSE event from ${provider}:`, evt.type)
 
         // Handle Anthropic format
         if (provider === 'anthropic' && evt?.type === 'content_block_delta' && evt?.delta?.type === 'text_delta') {
           const t = evt.delta.text || ''
-          console.log('📝 Server: Anthropic text delta:', t)
+          debug.log('📝 Server: Anthropic text delta:', t)
           if (t) send({ text: t })
           continue
         }
 
         // Handle Anthropic tool use events - forward to client for execution
         if (provider === 'anthropic' && evt?.type === 'content_block_start' && evt?.content_block?.type === 'tool_use') {
-          console.log('🔧 Server: Tool use detected in Anthropic response!', evt.content_block)
+          debug.log('🔧 Server: Tool use detected in Anthropic response!', evt.content_block)
           // Forward tool use event to client for execution
           sendEvt('anthropic-tool-use', {
             type: 'tool_use_start',
@@ -438,7 +439,7 @@ async function parseStreamResponse(
         }
 
         if (provider === 'anthropic' && evt?.type === 'content_block_delta' && evt?.delta?.type === 'input_json_delta') {
-          console.log('🔧 Server: Anthropic tool input delta:', evt.delta)
+          debug.log('🔧 Server: Anthropic tool input delta:', evt.delta)
           // Forward tool input delta to client
           sendEvt('anthropic-tool-use', {
             type: 'tool_input_delta',
@@ -449,7 +450,7 @@ async function parseStreamResponse(
 
         // Check for tool use completion
         if (provider === 'anthropic' && evt?.type === 'content_block_stop') {
-          console.log('🔧 Server: Anthropic content block stopped')
+          debug.log('🔧 Server: Anthropic content block stopped')
           sendEvt('anthropic-tool-use', {
             type: 'tool_use_complete'
           })
@@ -458,7 +459,7 @@ async function parseStreamResponse(
 
         // Stream ended - send done
         if (provider === 'anthropic' && evt?.type === 'message_stop') {
-          console.log('✅ Server: Message complete from Anthropic')
+          debug.log('✅ Server: Message complete from Anthropic')
           send({ done: true })
           break
         }
@@ -466,14 +467,14 @@ async function parseStreamResponse(
         // Handle OpenAI Responses API format
         if (provider === 'openai' && evt?.type === 'response.output_text.delta' && typeof evt?.delta === 'string') {
           const t = evt.delta
-          console.log('📝 Server: OpenAI text delta:', t)
+          debug.log('📝 Server: OpenAI text delta:', t)
           if (t) send({ text: t })
           continue
         }
 
         if (provider === 'openai' && evt?.type === 'response.refusal.delta' && typeof evt?.delta === 'string') {
           const t = evt.delta
-          console.log('📝 Server: OpenAI refusal delta:', t)
+          debug.log('📝 Server: OpenAI refusal delta:', t)
           if (t) send({ text: t })
           continue
         }
@@ -522,23 +523,23 @@ async function parseStreamResponse(
 
         // Handle OpenAI response lifecycle events
         if (provider === 'openai' && evt?.type === 'response.created') {
-          console.log('🚀 Server: OpenAI response created:', evt)
+          debug.log('🚀 Server: OpenAI response created:', evt)
           continue
         }
 
         if (provider === 'openai' && evt?.type === 'response.completed') {
-          console.log('✅ Server: OpenAI response completed:', evt)
+          debug.log('✅ Server: OpenAI response completed:', evt)
           send({ done: true })
           break
         }
 
         // Error handling for both providers
         if (evt?.type === 'error' && evt?.error) {
-          console.error('❌ Provider error received:', evt.error)
+          debug.error('❌ Provider error received:', evt.error)
 
           // Check if this is a retryable error during streaming
           if (isRetryableError({ error: evt.error })) {
-            console.log('⚠️ Retryable streaming error detected, closing stream to trigger retry')
+            debug.log('⚠️ Retryable streaming error detected, closing stream to trigger retry')
             // Close the reader and return to trigger outer retry logic
             reader.cancel()
             // This will be caught by the outer retry mechanism
@@ -550,11 +551,11 @@ async function parseStreamResponse(
         }
 
         if (provider === 'openai' && evt?.type === 'response.error' && evt?.error) {
-          console.error('❌ OpenAI error received:', evt.error)
+          debug.error('❌ OpenAI error received:', evt.error)
 
           // Check if this is a retryable error
           if (isRetryableError({ error: evt.error })) {
-            console.log('⚠️ Retryable OpenAI error detected, closing stream to trigger retry')
+            debug.log('⚠️ Retryable OpenAI error detected, closing stream to trigger retry')
             reader.cancel()
             throw new Error(`Retryable error: ${evt.error.message || 'Overloaded'}`)
           }
