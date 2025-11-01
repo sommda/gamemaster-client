@@ -13,6 +13,9 @@ export default defineNuxtConfig({
     },
     mcp: {
       url: process.env.MCP_URL || ''  // e.g., https://your-public-host
+    },
+    public: {
+      debug: process.env.DEBUG === 'true'
     }
   },
   routeRules: {
