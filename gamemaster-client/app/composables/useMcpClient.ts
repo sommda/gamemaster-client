@@ -1,6 +1,8 @@
 // composables/useMcpClient.ts
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { CreateMessageRequestSchema } from '@modelcontextprotocol/sdk/types.js'
+import { useSampling } from './useSampling'
 
 type RecordInteractionArgs = {
   player_entry: string
@@ -36,12 +38,32 @@ async function connectClient(): Promise<Client> {
     const base = new URL('/mcp', window.location.origin)
     const transport = new StreamableHTTPClientTransport(base)
 
-    const c = new Client({
-      name: 'gamemaster-web',
-      version: '1.0.0'
-    })
+    const c = new Client(
+      {
+        name: 'gamemaster-web',
+        version: '1.0.0'
+      },
+      {
+        capabilities: {
+          sampling: {} // Enable sampling capability
+        }
+      }
+    )
 
     await c.connect(transport) // ✅ SDK will initialize the session for you
+
+    // Set up sampling request handler
+    const { handleSamplingRequest } = useSampling()
+    c.setRequestHandler(CreateMessageRequestSchema, async (request) => {
+      try {
+        const result = await handleSamplingRequest(request.params)
+        return result
+      } catch (error) {
+        console.error('Error handling sampling request:', error)
+        throw error
+      }
+    })
+
     client = c
     connecting = null
     return c
@@ -219,12 +241,15 @@ export function useMcpClient() {
         }
         // Process TranscriptAdventure nodes (interior nodes)
         else if (node.node_type === 'adventure') {
-          // Recursively walk adventure actions
-          if (Array.isArray(node.actions)) {
-            for (const action of node.actions) {
-              walkNode(action)
-            }
+          // For adventure nodes, just add the summary as an assistant message
+          // Skip processing all the detailed actions within the adventure
+          if (node.summary) {
+            messages.push({
+              role: 'assistant',
+              content: node.summary
+            })
           }
+          // Note: We intentionally DO NOT walk node.actions here to compress context
         }
         // Process TranscriptTree root node
         else if (node.node_type === 'transcript') {
