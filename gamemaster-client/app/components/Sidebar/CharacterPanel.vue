@@ -12,6 +12,8 @@ type Character = {
   inventory?: any[]
   equipment?: any
   spells_known?: any[]
+  spell_slots?: Record<number, number>
+  spell_slots_used?: Record<number, number>
   background?: string
   alignment?: string
   description?: string
@@ -37,6 +39,7 @@ const collapsedSections = ref({
   abilities: true,
   equipment: true,
   spells: true,
+  spellSlots: true,
   description: true
 })
 
@@ -185,8 +188,35 @@ function toggleSection(section: keyof typeof collapsedSections.value) {
           <div v-show="!collapsedSections.spells" class="section-content">
             <div class="spells-list">
               <div v-for="spell in selectedCharacter.spells_known" :key="spell.id" class="spell-item">
-                <strong>{{ spell.name }}</strong> (Level {{ spell.level }})
+                <div class="spell-header">
+                  <span v-if="spell.prepared" class="prepared-check">✓</span>
+                  <strong>{{ spell.name }}</strong> (Level {{ spell.level }})
+                </div>
                 <div class="spell-school">{{ spell.school }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Spell Slots (for spellcasters only) -->
+        <div v-if="selectedCharacter.spell_slots && Object.keys(selectedCharacter.spell_slots).length > 0" class="info-section">
+          <h5 class="section-header" @click="toggleSection('spellSlots')">
+            <span class="expand-icon" :class="{ expanded: !collapsedSections.spellSlots }">▶</span>
+            Spell Slots
+          </h5>
+          <div v-show="!collapsedSections.spellSlots" class="section-content">
+            <div class="spell-slots-grid">
+              <div
+                v-for="(total, level) in selectedCharacter.spell_slots"
+                :key="level"
+                class="spell-slot-level"
+              >
+                <div class="slot-level-label">Level {{ level }}</div>
+                <div class="slot-counter">
+                  <span class="slots-used">{{ selectedCharacter.spell_slots_used?.[level] || 0 }} used</span>
+                  <span class="slots-separator">/</span>
+                  <span class="slots-total">{{ total }}</span>
+                </div>
               </div>
             </div>
           </div>
@@ -413,10 +443,63 @@ function toggleSection(section: keyof typeof collapsedSections.value) {
   border: 1px solid #e5e7eb;
 }
 
+.spell-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.prepared-check {
+  color: #059669;
+  font-weight: bold;
+  font-size: 14px;
+}
+
 .spell-school {
   font-size: 11px;
   color: #6b7280;
   font-style: italic;
+}
+
+.spell-slots-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+  gap: 8px;
+}
+
+.spell-slot-level {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  padding: 8px;
+  text-align: center;
+}
+
+.slot-level-label {
+  font-size: 10px;
+  font-weight: bold;
+  color: #6b7280;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.slot-counter {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.slots-used {
+  color: #dc2626;
+}
+
+.slots-separator {
+  color: #9ca3af;
+  margin: 0 2px;
+}
+
+.slots-total {
+  color: #059669;
 }
 
 .more-items {
