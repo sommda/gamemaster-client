@@ -1,4 +1,29 @@
 <script setup lang="ts">
+type SkillProficiency = 'none' | 'proficient' | 'expertise'
+
+type Skill = {
+  name: string
+  ability: string
+  proficiency: SkillProficiency
+  modifier: number
+}
+
+type SavingThrowProficiency = 'none' | 'proficient'
+
+type SavingThrow = {
+  ability: string
+  proficiency: SavingThrowProficiency
+  modifier: number
+}
+
+type SpecialAbility = {
+  id: string
+  name: string
+  description: string
+  uses?: string | null
+  uses_remaining?: number | null
+}
+
 type Character = {
   id: string
   name: string
@@ -9,11 +34,15 @@ type Character = {
   race?: any
   abilities?: any
   armor_class?: number
+  proficiency_bonus?: number
   inventory?: any[]
   equipment?: any
   spells_known?: any[]
   spell_slots?: Record<number, number>
   spell_slots_used?: Record<number, number>
+  skills?: Record<string, Skill>
+  saving_throws?: Record<string, SavingThrow>
+  special_abilities?: SpecialAbility[]
   background?: string
   alignment?: string
   description?: string
@@ -37,9 +66,12 @@ const collapsedSections = ref({
   basicInfo: true,
   combatStats: true,
   abilities: true,
+  skills: true,
+  savingThrows: true,
   equipment: true,
   spells: true,
   spellSlots: true,
+  specialAbilities: true,
   description: true
 })
 
@@ -155,6 +187,46 @@ function toggleSection(section: keyof typeof collapsedSections.value) {
           </div>
         </div>
 
+        <!-- Saving Throws -->
+        <div v-if="selectedCharacter.saving_throws" class="info-section">
+          <h5 class="section-header" @click="toggleSection('savingThrows')">
+            <span class="expand-icon" :class="{ expanded: !collapsedSections.savingThrows }">▶</span>
+            Saving Throws
+          </h5>
+          <div v-show="!collapsedSections.savingThrows" class="section-content">
+            <div class="saves-grid">
+              <div v-for="(save, ability) in selectedCharacter.saving_throws" :key="ability" class="save-item">
+                <div class="save-name">
+                  {{ String(ability).charAt(0).toUpperCase() + String(ability).slice(1, 3) }}
+                  <span v-if="save.proficiency === 'proficient'" class="proficiency-indicator" title="Proficient">●</span>
+                </div>
+                <div class="save-value">{{ save.modifier >= 0 ? '+' : '' }}{{ save.modifier }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Skills -->
+        <div v-if="selectedCharacter.skills" class="info-section full-width">
+          <h5 class="section-header" @click="toggleSection('skills')">
+            <span class="expand-icon" :class="{ expanded: !collapsedSections.skills }">▶</span>
+            Skills
+          </h5>
+          <div v-show="!collapsedSections.skills" class="section-content">
+            <div class="skills-grid">
+              <div v-for="(skill, skillName) in selectedCharacter.skills" :key="skillName" class="skill-item">
+                <div class="skill-name">
+                  <span v-if="skill.proficiency === 'proficient'" class="proficiency-indicator" title="Proficient">●</span>
+                  <span v-if="skill.proficiency === 'expertise'" class="proficiency-indicator expertise" title="Expertise">◆</span>
+                  {{ skill.name.split('_').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') }}
+                </div>
+                <div class="skill-ability">{{ String(skill.ability).charAt(0).toUpperCase() + String(skill.ability).slice(1, 3) }}</div>
+                <div class="skill-value">{{ skill.modifier >= 0 ? '+' : '' }}{{ skill.modifier }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Equipment -->
         <div v-if="selectedCharacter.equipment || selectedCharacter.inventory" class="info-section">
           <h5 class="section-header" @click="toggleSection('equipment')">
@@ -217,6 +289,30 @@ function toggleSection(section: keyof typeof collapsedSections.value) {
                   <span class="slots-separator">/</span>
                   <span class="slots-total">{{ total }}</span>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Special Abilities -->
+        <div v-if="selectedCharacter.special_abilities && selectedCharacter.special_abilities.length > 0" class="info-section full-width">
+          <h5 class="section-header" @click="toggleSection('specialAbilities')">
+            <span class="expand-icon" :class="{ expanded: !collapsedSections.specialAbilities }">▶</span>
+            Special Abilities
+          </h5>
+          <div v-show="!collapsedSections.specialAbilities" class="section-content">
+            <div class="special-abilities-list">
+              <div v-for="ability in selectedCharacter.special_abilities" :key="ability.id" class="special-ability-item">
+                <div class="ability-header">
+                  <strong>{{ ability.name }}</strong>
+                  <span v-if="ability.uses" class="ability-uses">
+                    <span v-if="ability.uses_remaining !== null && ability.uses_remaining !== undefined" class="uses-remaining">
+                      {{ ability.uses_remaining }}
+                    </span>
+                    <span class="uses-limit">{{ ability.uses }}</span>
+                  </span>
+                </div>
+                <div class="ability-description">{{ ability.description }}</div>
               </div>
             </div>
           </div>
@@ -423,6 +519,85 @@ function toggleSection(section: keyof typeof collapsedSections.value) {
   color: #1f2937;
 }
 
+.saves-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.save-item {
+  text-align: center;
+  padding: 6px;
+  background: #f9fafb;
+  border-radius: 4px;
+  border: 1px solid #e5e7eb;
+}
+
+.save-name {
+  font-size: 10px;
+  font-weight: bold;
+  color: #6b7280;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+
+.save-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.skills-grid {
+  display: grid;
+  gap: 4px;
+}
+
+.skill-item {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 8px;
+  background: #f9fafb;
+  border-radius: 4px;
+  border: 1px solid #e5e7eb;
+  font-size: 12px;
+}
+
+.skill-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #374151;
+}
+
+.skill-ability {
+  font-size: 10px;
+  color: #9ca3af;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+
+.skill-value {
+  font-weight: 600;
+  color: #1f2937;
+  text-align: right;
+  min-width: 30px;
+}
+
+.proficiency-indicator {
+  color: #059669;
+  font-size: 8px;
+}
+
+.proficiency-indicator.expertise {
+  color: #dc2626;
+}
+
 .inventory-list {
   list-style: none;
   padding: 0;
@@ -511,6 +686,59 @@ function toggleSection(section: keyof typeof collapsedSections.value) {
 
 .description, .bio {
   margin: 8px 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #4b5563;
+}
+
+.special-abilities-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.special-ability-item {
+  padding: 10px;
+  background: #f9fafb;
+  border-radius: 4px;
+  border: 1px solid #e5e7eb;
+}
+
+.ability-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  gap: 8px;
+}
+
+.ability-header strong {
+  color: #1f2937;
+  font-size: 14px;
+}
+
+.ability-uses {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+.uses-remaining {
+  font-weight: 600;
+  color: #2563eb;
+  background: #dbeafe;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.uses-limit {
+  font-style: italic;
+}
+
+.ability-description {
   font-size: 13px;
   line-height: 1.5;
   color: #4b5563;
