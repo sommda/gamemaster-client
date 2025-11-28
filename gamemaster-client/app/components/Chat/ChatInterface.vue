@@ -10,6 +10,7 @@ const props = defineProps<{
   messages: Msg[]
   provider: ProviderMode
   error: string | null
+  isPaginationPaused?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -17,10 +18,13 @@ const emit = defineEmits<{
   newChat: []
   changeProvider: [provider: ProviderMode]
   viewPrompt: []
+  paginationContinue: []
+  paginationInterrupt: []
 }>()
 
 const userInput = ref('')
 const chatBox = ref<HTMLElement | null>(null)
+const lastUserInputLength = ref(0)
 
 const visibleMessages = computed(() => props.messages.filter(m => m.role !== 'system'))
 
@@ -56,6 +60,38 @@ function viewPrompt() {
   emit('viewPrompt')
 }
 
+/**
+ * Handle click on chat box to continue when paused
+ */
+function handleChatBoxClick() {
+  if (props.isPaginationPaused) {
+    emit('paginationContinue')
+  }
+}
+
+// Watch for user typing to trigger interrupt when paused
+watch(
+  () => userInput.value,
+  (newValue) => {
+    // Only trigger if paused and user is actually typing (adding characters)
+    if (props.isPaginationPaused && newValue.length > lastUserInputLength.value) {
+      emit('paginationInterrupt')
+    }
+    lastUserInputLength.value = newValue.length
+  }
+)
+
+// Reset lastUserInputLength when paused state changes
+watch(
+  () => props.isPaginationPaused,
+  (isPaused) => {
+    if (isPaused) {
+      // When entering paused state, track current input length
+      lastUserInputLength.value = userInput.value.length
+    }
+  }
+)
+
 // Auto-scroll when messages change (for streaming)
 watch(
   () => props.messages,
@@ -68,9 +104,17 @@ watch(
   { deep: true }
 )
 
-// Expose scrollToBottom for parent component
+/**
+ * Get the current chat box height
+ */
+function getChatBoxHeight(): number {
+  return chatBox.value?.clientHeight || 0
+}
+
+// Expose scrollToBottom and getChatBoxHeight for parent component
 defineExpose({
-  scrollToBottom
+  scrollToBottom,
+  getChatBoxHeight
 })
 </script>
 
@@ -93,11 +137,12 @@ defineExpose({
       </div>
     </div>
 
-    <div ref="chatBox" class="chat-box">
+    <div ref="chatBox" class="chat-box" @click="handleChatBoxClick">
       <ChatMessage
         v-for="(message, i) in visibleMessages"
         :key="i"
         :message="message"
+        :is-paused="isPaginationPaused && i === visibleMessages.length - 1"
       />
     </div>
 
@@ -167,6 +212,10 @@ defineExpose({
   border-radius: 8px;
   padding: 12px;
   background: #fafafa;
+}
+
+.chat-box:has(.more-indicator) {
+  cursor: pointer;
 }
 
 .error {

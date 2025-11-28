@@ -1,8 +1,11 @@
 <script setup lang="ts">
+import MoreIndicator from './MoreIndicator.vue'
+
 type Msg = { role: 'system' | 'user' | 'assistant'; content: string }
 
 defineProps<{
   message: Msg
+  isPaused?: boolean
 }>()
 </script>
 
@@ -12,6 +15,7 @@ defineProps<{
     <div class="bubble">
       <StreamMarkdown v-if="message.role === 'assistant'" :source="message.content" />
       <div v-else class="user-text">{{ message.content }}</div>
+      <MoreIndicator v-if="isPaused && message.role === 'assistant'" />
     </div>
   </div>
 </template>

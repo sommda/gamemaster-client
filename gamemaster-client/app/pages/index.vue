@@ -17,6 +17,9 @@ onMounted(async () => {
   // Load existing transcript and game data on page load
   await chat.loadTranscriptToMessages()
   await gameData.refreshGameData()
+
+  // Set chat interface ref for pagination height measurements
+  chat.setChatInterfaceRef(chatInterface.value)
 })
 
 // Handle chat events
@@ -42,6 +45,14 @@ async function handleViewPrompt() {
   }
 }
 
+function handlePaginationContinue() {
+  chat.handlePaginationContinue()
+}
+
+function handlePaginationInterrupt() {
+  chat.handlePaginationInterrupt()
+}
+
 </script>
 
 <template>
@@ -52,10 +63,13 @@ async function handleViewPrompt() {
         :messages="chat.displayMessages.value"
         :provider="chat.provider.value"
         :error="chat.error.value"
+        :is-pagination-paused="chat.isPaginationPaused.value"
         @send="handleSend"
         @new-chat="handleNewChat"
         @change-provider="(p: ProviderMode) => chat.provider.value = p"
         @view-prompt="handleViewPrompt"
+        @pagination-continue="handlePaginationContinue"
+        @pagination-interrupt="handlePaginationInterrupt"
       />
 
       <!-- System settings component temporarily disabled -->

@@ -2,6 +2,7 @@ import { ref, reactive, computed } from 'vue'
 import { useChatStream } from './useChatStream'
 import { useMcpClient } from './useMcpClient'
 import { useClientToolCalling } from './useClientToolCalling'
+import { useStreamPagination } from './useStreamPagination'
 import { debug } from '../utils/debug'
 
 export type Msg = { role: 'system' | 'user' | 'assistant'; content: string | any[] }
@@ -60,6 +61,7 @@ export function useChat() {
   const { openChatStreamWithToolCalling } = useChatStream()
   const { recordInteractionWithTools, fetchTranscriptAsMessages, fetchCurrentPrompt } = useMcpClient()
   const { enhancePayloadWithTools, isClientMcpMode } = useClientToolCalling()
+  const pagination = useStreamPagination()
 
   // --- provider + models ---
   const provider = ref<ProviderMode>('anthropic-client-mcp')
@@ -77,6 +79,7 @@ export function useChat() {
   const displayMessages = computed(() => convertToDisplayMessages(messages.value))
   const error = ref<string | null>(null)
   const stop = ref<null | (() => void)>(null) // active stream closer
+  const chatInterfaceRef = ref<any>(null) // Reference to ChatInterface component
 
   async function loadTranscriptToMessages() {
     try {
@@ -130,6 +133,12 @@ export function useChat() {
     // reactive assistant placeholder
     const assistant = reactive<Msg>({ role: 'assistant', content: '' })
     messages.value.push(assistant)
+
+    // Initialize pagination for this message
+    // Use character count as proxy for height: ~600 chars ≈ one screen of text
+    const viewportHeight = chatInterfaceRef.value?.getChatBoxHeight?.() || 600
+    const estimatedCharsPerScreen = Math.floor(viewportHeight / 2) // Rough estimate: 2px per char
+    pagination.init(Date.now().toString(), estimatedCharsPerScreen)
 
     // Extract base provider for backward compatibility
     const baseProvider = provider.value.split('-')[0] as 'anthropic' | 'openai'
@@ -185,9 +194,16 @@ export function useChat() {
         (delta: string) => {
           // Track actual content for recording
           actualContent += delta
-          // Show to user immediately
-          pending += delta
-          if (!raf) raf = requestAnimationFrame(flush)
+
+          // Route through pagination system
+          const textToRender = pagination.addDelta(delta, delta.length)
+
+          if (textToRender !== null) {
+            // Show to user immediately
+            pending += textToRender
+            if (!raf) raf = requestAnimationFrame(flush)
+          }
+          // If null, text is buffered in pagination system
         },
         (err: any) => {
           error.value = typeof err === 'string' ? err : JSON.stringify(err, null, 2)
@@ -203,6 +219,17 @@ export function useChat() {
           // ✅ When the stream ends, record interaction and refresh chat history
           onDone: async (gameResponses?: (string | any[])[]) => {
             stop.value = null
+
+            // Flush any remaining buffered content from pagination
+            const bufferedText = pagination.flushBuffer()
+            if (bufferedText) {
+              pending += bufferedText
+              flush() // Force immediate flush
+            }
+
+            // Reset pagination state
+            pagination.reset()
+
             try {
               // Always use recordInteractionWithTools - it handles both tool calls and text-only responses
               // If no gameResponses provided, create a simple text response array
@@ -211,7 +238,7 @@ export function useChat() {
                 : [actualContent.trim()]
 
               const recordPayload = {
-                player_entry: userMsg.content,
+                player_entry: typeof userMsg.content === 'string' ? userMsg.content : JSON.stringify(userMsg.content),
                 game_responses: responses,
               }
 
@@ -233,8 +260,44 @@ export function useChat() {
       }
     } catch (e: any) {
       error.value = e?.message ?? String(e)
+      pagination.reset() // Reset pagination on error
       cancel()
     }
+  }
+
+  /**
+   * Handle user pressing a key to continue when pagination is paused
+   */
+  function handlePaginationContinue() {
+    const bufferedText = pagination.continueStreaming()
+    if (bufferedText) {
+      // Get the last assistant message
+      const lastMsg = messages.value[messages.value.length - 1]
+      if (lastMsg && lastMsg.role === 'assistant') {
+        if (typeof lastMsg.content === 'string') {
+          lastMsg.content += bufferedText
+        }
+      }
+    }
+  }
+
+  /**
+   * Handle user pressing space to interrupt when pagination is paused
+   */
+  function handlePaginationInterrupt() {
+    pagination.interrupt()
+    // Close the active stream
+    if (stop.value) {
+      stop.value()
+      stop.value = null
+    }
+  }
+
+  /**
+   * Set the chat interface ref for height measurements
+   */
+  function setChatInterfaceRef(ref: any) {
+    chatInterfaceRef.value = ref
   }
 
   async function viewCurrentPrompt(): Promise<string> {
@@ -253,12 +316,16 @@ export function useChat() {
     displayMessages,
     error,
     stop,
+    isPaginationPaused: pagination.isPaused,
 
     // Actions
     loadTranscriptToMessages,
     cancel,
     newChat,
     sendMessage,
-    viewCurrentPrompt
+    viewCurrentPrompt,
+    handlePaginationContinue,
+    handlePaginationInterrupt,
+    setChatInterfaceRef
   }
 }
