@@ -60,6 +60,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   selectCharacter: [character: Character]
   returnToCharacterSummary: []
+  showMap: []
 }>()
 
 function selectCharacter(character: Character) {
@@ -74,7 +75,7 @@ function returnToCharacterSummary() {
 <template>
   <aside class="right">
     <!-- Game State Panel (always shown) -->
-    <GameStatePanel :game-state="gameState" :campaign="campaign" />
+    <GameStatePanel :game-state="gameState" :campaign="campaign" @show-map="emit('showMap')" />
 
     <!-- Combat Pane (shown when in combat) -->
     <CombatPanel v-if="gameState.in_combat" :game-state="gameState" />

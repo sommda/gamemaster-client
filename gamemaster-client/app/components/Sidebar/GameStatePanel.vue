@@ -23,6 +23,10 @@ const props = defineProps<{
   campaign?: Campaign | null
 }>()
 
+const emit = defineEmits<{
+  showMap: []
+}>()
+
 // Computed property to get campaign name from various possible properties
 const campaignName = computed(() => {
   if (!props.campaign) return null
@@ -51,7 +55,12 @@ const campaignName = computed(() => {
       <!-- Current Location -->
       <div v-if="gameState.current_location" class="state-item">
         <div class="state-label">Location</div>
-        <div class="state-value">{{ gameState.current_location }}</div>
+        <div class="state-value location-with-button">
+          <span>{{ gameState.current_location }}</span>
+          <button @click="emit('showMap')" class="show-map-btn" title="Show Map">
+            🗺️
+          </button>
+        </div>
       </div>
 
       <!-- Party Funds -->
@@ -166,6 +175,29 @@ const campaignName = computed(() => {
   padding: 2px 6px;
   border-radius: 12px;
   text-transform: capitalize;
+}
+
+.location-with-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.show-map-btn {
+  padding: 2px 6px;
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.2s ease;
+  line-height: 1;
+}
+
+.show-map-btn:hover {
+  background: #2563eb;
 }
 
 /* Responsive adjustments for narrow sidebars */

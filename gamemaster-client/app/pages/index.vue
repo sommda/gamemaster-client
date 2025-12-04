@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import ChatInterface from '@/components/Chat/ChatInterface.vue'
 import GameSidebar from '@/components/Sidebar/GameSidebar.vue'
+import HexMapModal from '@/components/HexMap/HexMapModal.vue'
 import { useChat, type ProviderMode } from '@/composables/useChat'
 import { useGameData } from '@/composables/useGameData'
 
@@ -11,6 +12,9 @@ const gameData = useGameData()
 
 // Chat interface ref for scrolling
 const chatInterface = ref<InstanceType<typeof ChatInterface> | null>(null)
+
+// Hex map modal state
+const showHexMap = ref(false)
 
 // Initialize data on page load
 onMounted(async () => {
@@ -53,6 +57,10 @@ function handlePaginationInterrupt() {
   chat.handlePaginationInterrupt()
 }
 
+function handleShowMap() {
+  showHexMap.value = true
+}
+
 </script>
 
 <template>
@@ -88,6 +96,13 @@ function handlePaginationInterrupt() {
       :campaign="gameData.campaign.value"
       @select-character="gameData.selectCharacter"
       @return-to-character-summary="gameData.returnToCharacterSummary"
+      @show-map="handleShowMap"
+    />
+
+    <!-- Hex Map Modal -->
+    <HexMapModal
+      v-model:is-open="showHexMap"
+      :current-location="gameData.gameState.value.current_location"
     />
   </div>
 </template>
